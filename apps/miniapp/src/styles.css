@@ -1,0 +1,55 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+body {
+  margin: 0;
+  background: var(--tg-theme-bg-color, #0e0f13);
+  color: var(--tg-theme-text-color, #f2f2f2);
+}
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.app-content {
+  flex: 1;
+  padding: 16px;
+  padding-bottom: 72px;
+}
+
+.page h1 {
+  margin-bottom: 4px;
+}
+
+.page__meta {
+  opacity: 0.6;
+  font-size: 0.85rem;
+}
+
+.nav-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: space-around;
+  padding: 10px 0;
+  background: var(--tg-theme-secondary-bg-color, #16181d);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.nav-item {
+  color: inherit;
+  opacity: 0.6;
+  text-decoration: none;
+  font-size: 0.8rem;
+}
+
+.nav-item--active {
+  opacity: 1;
+  font-weight: 600;
+}
