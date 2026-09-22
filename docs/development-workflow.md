@@ -30,10 +30,10 @@ supabase functions serve   # serves telegram-init-auth, telegram-me, telegram-we
 
 `supabase start` prints a local `anon key`, `service_role key`, and
 `JWT secret` — put those in `.env` as `SUPABASE_ANON_KEY`,
-`SUPABASE_SERVICE_ROLE_KEY`, and `SUPABASE_JWT_SECRET`. Edge functions read
+`SUPABASE_SERVICE_ROLE_KEY`, and `TIPSTAR_JWT_SECRET`. Edge functions read
 secrets from `supabase/functions/.env` (or `supabase secrets set ...` for
 a deployed project) — set `TELEGRAM_BOT_TOKEN`, `SUPABASE_URL`,
-`SUPABASE_SERVICE_ROLE_KEY`, and `SUPABASE_JWT_SECRET` there too.
+`SUPABASE_SERVICE_ROLE_KEY`, and `TIPSTAR_JWT_SECRET` there too.
 
 ## Testing the Telegram auth flow locally
 

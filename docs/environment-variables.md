@@ -9,7 +9,7 @@ access live in `packages/config` (`loadServerConfig()` / `loadClientConfig()`).
 | `SUPABASE_URL` | yes | no | Safe for the Mini App bundle. |
 | `SUPABASE_ANON_KEY` | yes | no | Safe for the Mini App bundle. |
 | `SUPABASE_SERVICE_ROLE_KEY` | server only | **yes** | Bypasses RLS — never import `loadServerConfig()` from `apps/miniapp`. |
-| `SUPABASE_JWT_SECRET` | for auth endpoints | **yes** | Signs/verifies Tipstar session tokens (`@tipstar/session`); must be the Supabase project's own JWT secret so PostgREST/RLS accept the token. |
+| `TIPSTAR_JWT_SECRET` | for auth endpoints | **yes** | Signs/verifies Tipstar session tokens (`@tipstar/session`); must be the Supabase project's own JWT secret so PostgREST/RLS accept the token. |
 | `TELEGRAM_BOT_TOKEN` | for bot/edge functions | **yes** | Used for initData HMAC validation and Bot API calls. |
 | `TELEGRAM_BOT_USERNAME` | for bot | no | |
 | `TELEGRAM_WEBHOOK_SECRET` | for webhook mode | **yes** | Must match the `secret_token` passed to Telegram's `setWebhook`. |

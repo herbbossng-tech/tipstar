@@ -20,7 +20,7 @@ GoTrue.
   the internal user, `supabase/functions/telegram-init-auth` issues a
   compact HS256 JWT (`packages/session/src/jwt.ts`, mirrored for Deno)
   containing `{ sub, role: "authenticated", tipstar_user_id,
-  telegram_user_id, iat, exp }`, signed with `SUPABASE_JWT_SECRET` — the
+  telegram_user_id, iat, exp }`, signed with `TIPSTAR_JWT_SECRET` — the
   **same legacy project JWT secret** PostgREST already validates incoming
   bearer tokens against for the `anon`/`service_role` keys themselves.
   Because the signature matches, PostgREST treats this token exactly like
@@ -59,7 +59,7 @@ GoTrue.
   the chat, not restored from a dormant tab).
 
 ## Consequences
-- Rotating `SUPABASE_JWT_SECRET` invalidates every outstanding Tipstar
+- Rotating `TIPSTAR_JWT_SECRET` invalidates every outstanding Tipstar
   session immediately (same as it would for GoTrue-issued tokens) — this
   is a feature (fast global revocation), not a bug, but operationally it
   means rotating that secret is a "log everyone out" event.

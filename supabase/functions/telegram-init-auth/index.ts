@@ -13,7 +13,7 @@
 //      `upsert_telegram_user` RPC (supabase/migrations/20260921000000_...),
 //      using the service-role key so it can bypass RLS for this one write.
 //   3. Issues a Tipstar session token (mirrors packages/session/src/jwt.ts)
-//      signed with SUPABASE_JWT_SECRET, so PostgREST/RLS accept it on
+//      signed with TIPSTAR_JWT_SECRET, so PostgREST/RLS accept it on
 //      subsequent requests (see supabase/functions/telegram-me).
 //
 // The bot token, service-role key, and JWT secret never leave this
@@ -21,7 +21,7 @@
 //
 // Deploy: supabase functions deploy telegram-init-auth
 // Required secrets:
-//   TELEGRAM_BOT_TOKEN, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_JWT_SECRET
+//   TELEGRAM_BOT_TOKEN, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, TIPSTAR_JWT_SECRET
 // Optional secrets:
 //   TELEGRAM_INITDATA_MAX_AGE_SECONDS (default 86400)
 //   SESSION_TOKEN_TTL_SECONDS (default 21600)
@@ -158,7 +158,7 @@ Deno.serve(async (req: Request) => {
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  const jwtSecret = Deno.env.get("SUPABASE_JWT_SECRET");
+  const jwtSecret = Deno.env.get("TIPSTAR_JWT_SECRET");
   const botToken = Deno.env.get("TELEGRAM_BOT_TOKEN");
   if (!supabaseUrl || !serviceRoleKey || !jwtSecret || !botToken) {
     return json({ error: "server_misconfigured" }, 500);

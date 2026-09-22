@@ -57,7 +57,7 @@ Mini App                    telegram-init-auth (Edge Function)         Postgres
    │                                 ├─────────────────────────────────────▶
    │                                 │◀──── resolved users row ────────────┤
    │                                 │ issueSessionToken() [HS256, signed  │
-   │                                 │  with SUPABASE_JWT_SECRET]          │
+   │                                 │  with TIPSTAR_JWT_SECRET]          │
    │◀──── { user, session } ─────────┤                                     │
 ```
 
@@ -80,7 +80,7 @@ Mini App                    telegram-init-auth (Edge Function)         Postgres
 - **Session tokens** (`@tipstar/session`, mirrored for Deno in both
   `telegram-init-auth` and `telegram-me`) are compact HS256 JWTs carrying
   `{ sub, role: "authenticated", tipstar_user_id, telegram_user_id, iat,
-  exp }`, signed with `SUPABASE_JWT_SECRET` — the **same** secret
+  exp }`, signed with `TIPSTAR_JWT_SECRET` — the **same** secret
   PostgREST uses to validate bearer tokens. This is what lets
   `tipstar_auth_user_id()` (`supabase/migrations/20260919000000_init_schema.sql`)
   read `tipstar_user_id` out of `request.jwt.claims` for RLS, exactly as

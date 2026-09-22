@@ -13,7 +13,7 @@
 // own profile: if RLS wouldn't allow the read, this returns nothing.
 //
 // Deploy: supabase functions deploy telegram-me
-// Required secrets: SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_JWT_SECRET
+// Required secrets: SUPABASE_URL, SUPABASE_ANON_KEY, TIPSTAR_JWT_SECRET
 
 const encoder = new TextEncoder();
 const CORS_HEADERS = {
@@ -95,7 +95,7 @@ Deno.serve(async (req: Request) => {
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
-  const jwtSecret = Deno.env.get("SUPABASE_JWT_SECRET");
+  const jwtSecret = Deno.env.get("TIPSTAR_JWT_SECRET");
   if (!supabaseUrl || !anonKey || !jwtSecret) {
     return json({ error: "server_misconfigured" }, 500);
   }

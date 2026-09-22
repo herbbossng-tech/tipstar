@@ -20,7 +20,7 @@ export const envSchema = z.object({
   // application session token so PostgREST accepts it as an authenticated
   // request and exposes its claims to RLS via tipstar_auth_user_id().
   // SERVER-ONLY — see SERVER_ONLY_ENV_KEYS below.
-  SUPABASE_JWT_SECRET: z.string().optional(),
+  TIPSTAR_JWT_SECRET: z.string().optional(),
 
   TELEGRAM_BOT_TOKEN: z.string().optional(),
   TELEGRAM_BOT_USERNAME: z.string().optional(),
@@ -118,7 +118,7 @@ export function toConfig(env: RawEnv): TipstarConfig {
       url: env.SUPABASE_URL,
       anonKey: env.SUPABASE_ANON_KEY,
       serviceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY,
-      jwtSecret: env.SUPABASE_JWT_SECRET,
+      jwtSecret: env.TIPSTAR_JWT_SECRET,
     },
     telegram: {
       botToken: env.TELEGRAM_BOT_TOKEN,
@@ -147,7 +147,7 @@ export function toConfig(env: RawEnv): TipstarConfig {
 /** Config fields that must never be exposed to a browser bundle (Mini App client). */
 export const SERVER_ONLY_ENV_KEYS = [
   "SUPABASE_SERVICE_ROLE_KEY",
-  "SUPABASE_JWT_SECRET",
+  "TIPSTAR_JWT_SECRET",
   "TELEGRAM_BOT_TOKEN",
   "TELEGRAM_WEBHOOK_SECRET",
   "SPORTS_PROVIDER_API_KEY",

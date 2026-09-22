@@ -18,7 +18,7 @@ function sign(headerAndPayload: string, secret: string): string {
  * Issues a compact HS256 JWT carrying `TipstarSessionClaims`.
  *
  * The signing secret MUST be the Supabase project's JWT secret
- * (`SUPABASE_JWT_SECRET`) so PostgREST — which validates any JWT signed
+ * (`TIPSTAR_JWT_SECRET`) so PostgREST — which validates any JWT signed
  * with that same secret — accepts this token as an authenticated request
  * and exposes its claims via `request.jwt.claims`, which
  * `tipstar_auth_user_id()` reads (see supabase/migrations). This is how
