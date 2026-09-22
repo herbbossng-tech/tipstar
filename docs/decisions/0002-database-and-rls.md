@@ -51,6 +51,9 @@ Constitution K/L/M.
 - Any future auth change (e.g. issuing Supabase-native JWTs instead of a
   custom token) only needs to guarantee the `tipstar_user_id` claim is
   present and trustworthy — no RLS policy needs to change.
+  **Update (Section 02):** this is exactly what happened — see ADR 0004,
+  which fulfills the "issuing the actual signed session/JWT" concern this
+  ADR deferred, without changing anything documented here.
 - `intelligence_results`, `decision_outcomes`, and `audit_log` intentionally
   ship with **no** client-facing RLS policies yet (service-role only).
   This is a placeholder for a future admin-role policy, not an oversight —

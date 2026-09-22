@@ -1,55 +1,230 @@
-:root {
-  color-scheme: light dark;
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+@import "./theme/tokens.css";
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
 }
 
 body {
   margin: 0;
-  background: var(--tg-theme-bg-color, #0e0f13);
-  color: var(--tg-theme-text-color, #f2f2f2);
+  background: var(--color-bg);
+  color: var(--color-text-primary);
+  font-family: var(--font-family);
+  font-size: var(--font-size-base);
+  -webkit-tap-highlight-color: transparent;
+}
+
+button {
+  font-family: inherit;
+}
+
+a {
+  color: var(--color-link);
 }
 
 .app-shell {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  min-height: var(--tg-viewport-stable-height, 100vh);
 }
 
 .app-content {
   flex: 1;
-  padding: 16px;
-  padding-bottom: 72px;
+  padding: var(--space-4);
+  padding-top: calc(var(--space-4) + var(--tg-safe-area-top));
+  padding-bottom: calc(var(--nav-bar-height) + var(--space-5));
+}
+
+/* Generic page section */
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
 }
 
 .page h1 {
-  margin-bottom: 4px;
+  margin: 0;
+  font-size: var(--font-size-xl);
+  font-weight: 700;
 }
 
 .page__meta {
-  opacity: 0.6;
-  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
 }
 
+.page__subtitle {
+  color: var(--color-text-secondary);
+  margin: 0 0 var(--space-2);
+}
+
+/* Cards */
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+}
+
+.card + .card {
+  margin-top: var(--space-3);
+}
+
+.card__title {
+  font-weight: 600;
+  margin: 0 0 var(--space-1);
+}
+
+.card__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.card__row:last-child {
+  border-bottom: none;
+}
+
+.card__row-label {
+  color: var(--color-text-secondary);
+}
+
+.card__row-value {
+  font-weight: 500;
+}
+
+/* Badges */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px var(--space-2);
+  border-radius: 999px;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.badge--success {
+  background: color-mix(in srgb, var(--color-success) 20%, transparent);
+  color: var(--color-success);
+}
+
+.badge--info {
+  background: color-mix(in srgb, var(--color-info) 20%, transparent);
+  color: var(--color-info);
+}
+
+.badge--muted {
+  background: color-mix(in srgb, var(--color-text-muted) 20%, transparent);
+  color: var(--color-text-secondary);
+}
+
+/* Buttons (used outside Telegram's native Main Button, e.g. retry actions) */
+.button {
+  appearance: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+  cursor: pointer;
+}
+
+.button:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.button--secondary {
+  background: var(--color-surface-elevated);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border);
+}
+
+/* Loading / Empty / Error states */
+.state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  text-align: center;
+  padding: var(--space-6) var(--space-4);
+  color: var(--color-text-secondary);
+}
+
+.state__title {
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.state__message {
+  margin: 0;
+  max-width: 32ch;
+}
+
+.state--error .state__title {
+  color: var(--color-danger);
+}
+
+.state__spinner {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-accent);
+  animation: state-spin 0.8s linear infinite;
+}
+
+@keyframes state-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Bottom navigation */
 .nav-bar {
   position: fixed;
   bottom: 0;
   left: 0;
   right: 0;
+  height: var(--nav-bar-height);
+  padding-bottom: var(--tg-safe-area-bottom);
   display: flex;
   justify-content: space-around;
-  padding: 10px 0;
-  background: var(--tg-theme-secondary-bg-color, #16181d);
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  align-items: center;
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-border);
 }
 
 .nav-item {
-  color: inherit;
-  opacity: 0.6;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  color: var(--color-text-muted);
   text-decoration: none;
-  font-size: 0.8rem;
+  font-size: var(--font-size-sm);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+}
+
+.nav-item:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }
 
 .nav-item--active {
-  opacity: 1;
+  color: var(--color-accent);
   font-weight: 600;
 }

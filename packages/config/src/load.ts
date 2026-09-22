@@ -19,16 +19,29 @@ export function loadServerConfig(source: Record<string, string | undefined> = pr
   return toConfig(parsed.data);
 }
 
-/**
- * Loads only the subset of configuration safe for a browser bundle
- * (the Mini App). Server-only secrets are never read here.
- */
-export function loadClientConfig(source: Record<string, string | undefined>): {
+export interface ClientConfig {
   readonly supabaseUrl: string;
   readonly supabaseAnonKey: string;
   readonly apiBaseUrl: string;
   readonly telegramMiniAppUrl: string | undefined;
-} {
+  readonly appEnv: "development" | "staging" | "production";
+  /**
+   * True only when the server has explicitly enabled the development
+   * Telegram-auth bypass (never true in production — see
+   * docs/architecture/telegram-security.md). This is not a secret; it only
+   * controls whether the Mini App shows a dev-only "Continue without
+   * Telegram" affordance. The backend independently re-checks this before
+   * honoring a bypass request — this flag is a UX convenience only.
+   */
+  readonly devAuthBypassEnabled: boolean;
+}
+
+/**
+ * Loads only the subset of configuration safe for a browser bundle
+ * (the Mini App). Server-only secrets are never read here — this is the
+ * allowlist `apps/miniapp`'s build is permitted to embed.
+ */
+export function loadClientConfig(source: Record<string, string | undefined>): ClientConfig {
   const supabaseUrl = source.SUPABASE_URL;
   const supabaseAnonKey = source.SUPABASE_ANON_KEY;
   const apiBaseUrl = source.API_BASE_URL;
@@ -38,10 +51,13 @@ export function loadClientConfig(source: Record<string, string | undefined>): {
       message: "Client configuration is invalid or incomplete.",
     });
   }
+  const appEnv = source.APP_ENV === "staging" || source.APP_ENV === "production" ? source.APP_ENV : "development";
   return {
     supabaseUrl,
     supabaseAnonKey,
     apiBaseUrl,
     telegramMiniAppUrl: source.TELEGRAM_MINIAPP_URL,
+    appEnv,
+    devAuthBypassEnabled: appEnv !== "production" && source.TIPSTAR_DEV_AUTH_BYPASS === "true",
   };
 }

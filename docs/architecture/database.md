@@ -1,8 +1,11 @@
 # Database Conventions
 
-Schema lives in `supabase/migrations/`. Section 01 ships one migration:
-`20260919000000_init_schema.sql`. Never edit a shipped migration — add a
-new one.
+Schema lives in `supabase/migrations/`. Section 01 shipped
+`20260919000000_init_schema.sql`; Section 02 adds
+`20260921000000_telegram_session_upsert.sql` (the `upsert_telegram_user`
+function backing `supabase/functions/telegram-init-auth` — see
+`docs/architecture/telegram-security.md`). Never edit a shipped
+migration — add a new one.
 
 ## Conventions
 
@@ -51,6 +54,17 @@ client-supplied user id column directly.
   policies at all yet — inaccessible to anon/authenticated roles, visible
   only via the service role. A future admin API can add a scoped policy
   keyed off `user_roles` once that surface exists.
+
+## Server-side functions
+
+`upsert_telegram_user(...)` (Section 02) is the only supported way to
+create/refresh a user from a validated Telegram identity. It is
+`security definer`, and `EXECUTE` is revoked from `public`/`anon`/
+`authenticated` and granted only to `service_role` — a client can never
+call it directly, validated Telegram identity or not. It never resets
+`status`, roles, subscriptions, or referral attribution on a returning
+login (Section 7), and is safe under two concurrent calls for the same
+`telegram_user_id` (an `on conflict` recovery path, not a race).
 
 ## Service role usage
 

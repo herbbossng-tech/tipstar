@@ -9,9 +9,13 @@ export interface ResolvedSession {
 
 /**
  * Persistence boundary for turning a validated Telegram user into an
- * internal Tipstar user. Concrete implementation (Supabase-backed) is
- * provided by the backend, not this package — this package only owns
- * Telegram protocol concerns.
+ * internal Tipstar user. This package only owns Telegram protocol
+ * concerns; the concrete implementation is the `upsert_telegram_user`
+ * Postgres RPC (supabase/migrations/20260921000000_telegram_session_upsert.sql),
+ * called from supabase/functions/telegram-init-auth (Section 02). See
+ * in-memory-user-repository.ts for the development/test double used to
+ * unit test resolveOrCreateSession's idempotency contract below without a
+ * database.
  */
 export interface UserIdentityRepository {
   findByTelegramUserId(telegramUserId: number): Promise<ResolvedSession | undefined>;

@@ -20,13 +20,50 @@ pnpm dev:miniapp   # Vite dev server for apps/miniapp, http://localhost:5173
 pnpm dev:bot       # apps/bot in long-polling mode (requires TELEGRAM_BOT_TOKEN)
 ```
 
-## Local Supabase (optional, for database/edge-function work)
+## Local Supabase (required for Telegram authentication end-to-end)
 
 ```bash
 supabase start
 supabase db reset          # applies supabase/migrations/*, then supabase/seed/seed.sql
-supabase functions serve
+supabase functions serve   # serves telegram-init-auth, telegram-me, telegram-webhook locally
 ```
+
+`supabase start` prints a local `anon key`, `service_role key`, and
+`JWT secret` — put those in `.env` as `SUPABASE_ANON_KEY`,
+`SUPABASE_SERVICE_ROLE_KEY`, and `SUPABASE_JWT_SECRET`. Edge functions read
+secrets from `supabase/functions/.env` (or `supabase secrets set ...` for
+a deployed project) — set `TELEGRAM_BOT_TOKEN`, `SUPABASE_URL`,
+`SUPABASE_SERVICE_ROLE_KEY`, and `SUPABASE_JWT_SECRET` there too.
+
+## Testing the Telegram auth flow locally
+
+Real Telegram Mini App testing requires an HTTPS-reachable URL (Telegram
+will not load a Mini App over plain HTTP). Two supported paths:
+
+**A — Real Telegram, via a tunnel**
+1. `pnpm dev:miniapp` (serves on `http://localhost:5173`).
+2. Expose it over HTTPS with a tunnel, e.g. `cloudflared tunnel --url http://localhost:5173`
+   or `ngrok http 5173`. Never hard-code the resulting URL anywhere committed.
+3. Set that HTTPS URL as the Mini App URL for your **test** bot via
+   [@BotFather](https://t.me/BotFather) (`/newapp` or `/myapps` → Bot Settings → Menu Button / Mini App).
+4. Open the bot in Telegram and launch the Mini App. `initData` is now real
+   and validated by `telegram-init-auth` against your `TELEGRAM_BOT_TOKEN`.
+5. Inspect the request/response in your browser's remote-debugging tools
+   (Telegram Desktop supports `View → Developer Tools` for Mini Apps) or in
+   `supabase functions serve`'s logs.
+
+**B — Development bypass, no Telegram required**
+1. Set `TIPSTAR_DEV_AUTH_BYPASS=true` in `.env` (ignored automatically
+   unless `APP_ENV` is not `production` — see
+   `docs/architecture/telegram-security.md#development-mode`).
+2. `pnpm dev:miniapp`, open `http://localhost:5173` in a plain browser.
+3. The Mini App detects it isn't running inside Telegram and shows a
+   "Continue as dev user (development only)" button instead of a blank
+   screen — click it to get a real session issued by
+   `telegram-init-auth`'s dev-bypass path.
+4. **Never** set `TIPSTAR_DEV_AUTH_BYPASS=true` for a staging/production
+   deployment — the backend ignores it there regardless, but keeping it
+   unset/`false` is still the expectation.
 
 ## Quality gates
 

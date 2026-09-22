@@ -118,6 +118,9 @@ importers:
       vite:
         specifier: ^6.0.5
         version: 6.4.3(@types/node@22.20.4)(tsx@4.23.13)
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.4)
 
   packages/audit:
     dependencies:
@@ -226,6 +229,22 @@ importers:
         version: 2.1.9(@types/node@22.20.4)
 
   packages/picks:
+    dependencies:
+      '@tipstar/shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@tipstar/types':
+        specifier: workspace:*
+        version: link:../types
+    devDependencies:
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.4)
+
+  packages/session:
     dependencies:
       '@tipstar/shared':
         specifier: workspace:*

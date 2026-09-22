@@ -18,3 +18,9 @@ verify_jwt = false
 
 [functions.telegram-init-auth]
 verify_jwt = false
+
+[functions.telegram-me]
+# This function verifies the Tipstar session token itself (not a Supabase
+# Auth JWT) and re-issues the request to PostgREST under that identity —
+# see supabase/functions/telegram-me/index.ts.
+verify_jwt = false

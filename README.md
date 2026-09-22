@@ -4,11 +4,20 @@ Tipstar is a sports intelligence and betting companion platform delivered
 primarily through a Telegram Mini App, supported by a Telegram Bot/Channel
 and a Supabase-powered backend.
 
-This repository is built progressively across 12 sections. **Section 01 —
-Product Foundation & Engineering Architecture** is implemented here: a
-strict-TypeScript monorepo with the domain packages, Telegram security
-foundation, database schema, and architectural boundaries every later
-section extends.
+This repository is built progressively across 12 sections.
+
+- **Section 01 — Product Foundation & Engineering Architecture**: a
+  strict-TypeScript monorepo with the domain packages, Telegram security
+  foundation, database schema, and architectural boundaries every later
+  section extends.
+- **Section 02 — Telegram Identity & Mini App Core**: server-side
+  Telegram `initData` validation is wired end to end into a real
+  authentication flow (idempotent user upsert, a signed session token
+  PostgREST/RLS accept, a `GET current user` endpoint enforced through
+  RLS), and the Mini App gained its real shell — Telegram SDK
+  abstraction, theme/viewport handling, routing, bottom navigation, and
+  Loading/Empty/Error states across every foundation screen. See
+  `docs/architecture/telegram-security.md`.
 
 ## Repository layout
 
@@ -21,6 +30,7 @@ packages/
   types/           Shared domain types (user, sports, intelligence, picks, entitlements, audit)
   config/          Environment schema & typed config loader (zod)
   telegram/        initData validation, webhook verification, session boundary
+  session/         Session token issuance/verification (Section 02)
   sports/          SportsProvider interfaces per domain + mock (dev-only) adapters
   intelligence/    IntelligenceAgent contract + Football/Basketball/Virtual Football/Aviator agents
   decision-engine/ Common publication Decision Engine

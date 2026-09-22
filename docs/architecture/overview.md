@@ -10,9 +10,9 @@ every later section extends it rather than replacing it.
 ```
 TIPSTAR
 │
-├── apps/miniapp        Telegram Mini App (React + Vite + TS)
+├── apps/miniapp        Telegram Mini App (React + Vite + TS) — Section 02 core
 ├── apps/bot             Telegram Bot (grammy, Node)
-├── supabase/functions   Telegram Channel / webhook edge functions
+├── supabase/functions   Telegram auth/webhook/channel edge functions
 ├── supabase/migrations  Core Backend schema (PostgreSQL)
 │
 ├── packages/sports          Sports Data Layer (provider abstraction)
@@ -28,7 +28,8 @@ TIPSTAR
 ├── packages/entitlements       Subscription / Affiliate / RBAC
 ├── packages/notifications      Notification System
 ├── packages/audit               Audit & structured logging
-├── packages/telegram             Telegram auth/session foundation
+├── packages/telegram             Telegram initData/webhook validation
+├── packages/session                Session token issuance/verification (Section 02)
 ├── packages/config                 Environment configuration
 └── packages/types, packages/shared   Shared domain types & utilities
 ```
@@ -89,6 +90,24 @@ already produced by this pipeline.
 - The Aviator Agent never encodes a fixed win-rate target. Any target rate
   belongs to a later section's backtesting work, evaluated against real
   history, not hard-coded here.
+
+## Section 02: Telegram identity & Mini App core
+
+Section 02 closes the "Section 01 boundary" ADR 0002 left open (session/JWT
+issuance) and builds the Mini App shell on top of it:
+
+- `apps/miniapp` gained a `TelegramProvider`/`useTelegram()` abstraction
+  (SDK init, theme/viewport binding, Back/Main Button, haptics), an
+  `AuthProvider`/`useAuth()` session layer, a typed API client, reusable
+  Loading/Empty/Error states, and routed pages for Home/Picks/Matches/
+  Performance/Account — all still foundation-only, no fabricated product
+  data (Section 41, permanent).
+- `packages/session` issues/verifies the Tipstar session token; see
+  [`telegram-security.md`](./telegram-security.md) for the full flow.
+- `supabase/functions/telegram-init-auth` now performs the complete
+  validate → upsert → issue-session flow; `supabase/functions/telegram-me`
+  is new (`GET current user`, enforced through RLS, not a service-role
+  bypass).
 
 See also:
 - [`telegram-security.md`](./telegram-security.md)

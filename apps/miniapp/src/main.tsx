@@ -2,10 +2,9 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import { App } from "./App.js";
-import { bootstrapTelegram } from "./telegram/bootstrap.js";
+import { AuthProvider } from "./auth/AuthProvider.js";
+import { TelegramProvider } from "./telegram/TelegramProvider.js";
 import "./styles.css";
-
-const telegram = bootstrapTelegram();
 
 const rootElement = document.getElementById("root");
 if (!rootElement) {
@@ -14,8 +13,12 @@ if (!rootElement) {
 
 ReactDOM.createRoot(rootElement).render(
   <React.StrictMode>
-    <BrowserRouter>
-      <App telegram={telegram} />
-    </BrowserRouter>
+    <TelegramProvider>
+      <AuthProvider>
+        <BrowserRouter>
+          <App />
+        </BrowserRouter>
+      </AuthProvider>
+    </TelegramProvider>
   </React.StrictMode>,
 );
