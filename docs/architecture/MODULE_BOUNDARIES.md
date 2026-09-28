@@ -11,7 +11,7 @@ only" means an interface exists with no default implementation at all
 
 | # | Service | Package | File | Status |
 |---|---|---|---|---|
-| 1 | IdentityService | `@sport-os/platform` | `identity.ts` | NotImplemented (needs persistence — Section 03) |
+| 1 | IdentityService | `@sport-os/platform` | `identity.ts` | NotImplemented (needs persistence — Section 03). Distinct from `TelegramAuthenticationService` below, which answers "who is this" for a single request/session, not "what account does this map to." |
 | 2 | LicenseService | `@sport-os/platform` | `license.ts` | NotImplemented persistence; `licenseAllows()` decision rule is **real** |
 | 3 | AgentService | `@sport-os/agent-core` | `agent-service.ts` | **Real** (`InMemoryAgentRegistry`) |
 | 4 | FootballService | `@sport-os/football-engine` | `service.ts` | NotImplemented (depends on the whole football pipeline) |
@@ -25,6 +25,7 @@ only" means an interface exists with no default implementation at all
 | 12 | ReportingService | `@sport-os/platform` | `reporting.ts` | NotImplemented (needs real settled data) |
 | 13 | AuditService | `@sport-os/platform` | `audit.ts` | **Real** (`InMemoryAuditService`) |
 | 14 | HealthService | `@sport-os/platform` | `health.ts` | **Real** (`buildHealthReport`); exposed via `supabase/functions/health` |
+| — | TelegramAuthenticationService | `@sport-os/telegram` | `authentication-service.ts` | **Real** (Section 02). Verifies raw `initData` and issues a stateless signed session token (`session.ts`); exposed via `supabase/functions/telegram-auth`. Not one of the blueprint's original 14 — added the same way `packages/config` and `packages/platform` were (see `ARCHITECTURE.md`'s "Why two packages beyond the eight the blueprint named" and `OPEN_QUESTIONS.md` #5). |
 
 ## Agent Core
 
@@ -47,7 +48,10 @@ gain real implementations.
 
 - `validateInitData()` — real, HMAC-SHA256 per Telegram's documented
   Mini App algorithm (ported with tests from prior work, still the only
-  place Telegram identity may be trusted from).
+  place Telegram identity may be trusted from). Section 02 added
+  configurable freshness (`maxAgeSeconds`/`clockSkewSeconds`), per-failure
+  `TelegramAuthErrorCode`s, and fixed a latent bug where a malformed
+  `auth_date` produced `NaN` and silently passed the freshness check.
 - `verifyWebhookSecret()` — real, constant-time comparison.
 - `TelegramDestination` — typed, validated (`validateTelegramDestination`),
   never a hard-coded chat id anywhere in this codebase.
@@ -57,6 +61,9 @@ gain real implementations.
   publish.
 - `TelegramDestinationManager` (CRUD) — `NotImplemented`, needs
   persistence (Section 03).
+- `DefaultTelegramAuthenticationService` / `issueAuthSession()` /
+  `verifyAuthSession()` / `isDevAuthModeUsable()` — real (Section 02); see
+  `docs/architecture/TELEGRAM_AUTHENTICATION.md` for the full design.
 
 ## Licensing Foundation
 

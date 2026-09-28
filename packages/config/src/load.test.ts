@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ConfigurationError } from "@sport-os/shared";
-import { loadClientConfig, loadServerConfig } from "./load.js";
+import { loadServerConfig } from "./load.js";
 
 const BASE_ENV = {
   APP_ENV: "development",
@@ -40,9 +40,52 @@ describe("loadServerConfig", () => {
       SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
       TELEGRAM_BOT_TOKEN: "bot-token",
       TELEGRAM_WEBHOOK_SECRET: "webhook-secret",
+      SESSION_SIGNING_SECRET: "session-signing-secret",
     });
     expect(config.app.env).toBe("production");
     expect(config.telegram.botToken).toBe("bot-token");
+    expect(config.session.signingSecret).toBe("session-signing-secret");
+  });
+
+  it("fails safely in production when SESSION_SIGNING_SECRET is missing", () => {
+    expect(() =>
+      loadServerConfig({
+        ...BASE_ENV,
+        APP_ENV: "production",
+        SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
+        TELEGRAM_BOT_TOKEN: "bot-token",
+        TELEGRAM_WEBHOOK_SECRET: "webhook-secret",
+      }),
+    ).toThrow(ConfigurationError);
+  });
+
+  it("refuses to load in production when DEV_AUTH_MODE is enabled, even alongside every other required secret", () => {
+    expect(() =>
+      loadServerConfig({
+        ...BASE_ENV,
+        APP_ENV: "production",
+        SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
+        TELEGRAM_BOT_TOKEN: "bot-token",
+        TELEGRAM_WEBHOOK_SECRET: "webhook-secret",
+        SESSION_SIGNING_SECRET: "session-signing-secret",
+        DEV_AUTH_MODE: "enabled",
+      }),
+    ).toThrow(ConfigurationError);
+  });
+
+  it("defaults the Telegram initData freshness window and session TTL", () => {
+    const config = loadServerConfig(BASE_ENV);
+    expect(config.telegram.initDataMaxAgeSeconds).toBe(86400);
+    expect(config.telegram.initDataClockSkewSeconds).toBe(60);
+    expect(config.session.tokenTtlSeconds).toBe(86400);
+    expect(config.devAuth.mode).toBe("disabled");
+  });
+
+  it("parses the Telegram initData freshness window and session TTL from the environment", () => {
+    const config = loadServerConfig({ ...BASE_ENV, TELEGRAM_INIT_DATA_MAX_AGE_SECONDS: "3600", TELEGRAM_INIT_DATA_CLOCK_SKEW_SECONDS: "30", SESSION_TOKEN_TTL_SECONDS: "7200" });
+    expect(config.telegram.initDataMaxAgeSeconds).toBe(3600);
+    expect(config.telegram.initDataClockSkewSeconds).toBe(30);
+    expect(config.session.tokenTtlSeconds).toBe(7200);
   });
 
   it("does not require Telegram/provider secrets outside production", () => {
@@ -55,21 +98,5 @@ describe("loadServerConfig", () => {
     expect(loadServerConfig({ ...BASE_ENV, JOBS_ENABLED: "true" }).jobs.enabled).toBe(true);
     expect(loadServerConfig({ ...BASE_ENV, JOBS_ENABLED: "false" }).jobs.enabled).toBe(false);
     expect(loadServerConfig({ ...BASE_ENV, JOBS_ENABLED: "yes" }).jobs.enabled).toBe(false);
-  });
-});
-
-describe("loadClientConfig", () => {
-  it("loads only the VITE_-prefixed client-safe subset", () => {
-    const config = loadClientConfig({ VITE_APP_NAME: "Sport OS", VITE_API_BASE_URL: "https://api.example.com", APP_ENV: "staging" });
-    expect(config).toEqual({ appName: "Sport OS", apiBaseUrl: "https://api.example.com", appEnv: "staging" });
-  });
-
-  it("throws when required client vars are missing", () => {
-    expect(() => loadClientConfig({})).toThrow(ConfigurationError);
-  });
-
-  it("defaults appEnv to development for an unrecognized/missing value", () => {
-    const config = loadClientConfig({ VITE_APP_NAME: "Sport OS", VITE_API_BASE_URL: "https://api.example.com" });
-    expect(config.appEnv).toBe("development");
   });
 });

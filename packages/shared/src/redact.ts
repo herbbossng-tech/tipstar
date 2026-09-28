@@ -1,4 +1,5 @@
-const SENSITIVE_KEY_PATTERN = /token|secret|password|api[_-]?key|service[_-]?role|authorization|credential|private[_-]?key/i;
+const SENSITIVE_KEY_PATTERN =
+  /token|secret|password|api[_-]?key|service[_-]?role|authorization|credential|private[_-]?key|init[_-]?data|raw[_-]?init/i;
 const REDACTED = "[REDACTED]";
 
 /**
@@ -6,7 +7,9 @@ const REDACTED = "[REDACTED]";
  * Every Logger implementation in this package calls this — never log a raw
  * context/metadata object without passing it through this first (Section
  * 01 Logging: never log API secrets, bot tokens, passwords, credentials,
- * private keys, or full sensitive payloads).
+ * private keys, or full sensitive payloads; Section 02 adds raw Telegram
+ * initData to that list — it is authentication material, not just a
+ * request parameter, per docs/architecture/TELEGRAM_AUTHENTICATION.md).
  */
 export function redact(value: unknown): unknown {
   if (Array.isArray(value)) {
