@@ -1,4 +1,4 @@
-import { generateId, ValidationError, type UUID } from "@sport-os/shared";
+import { generateId, ValidationError, type ISODateString, type UUID } from "@sport-os/shared";
 import type { SupabaseClient } from "@sport-os/platform";
 import type { Fixture, MatchEvent, MatchResult, MatchStatus } from "../canonical.js";
 import type { FixtureRow, MatchEventRow, MatchResultRow } from "../db/types.js";
@@ -28,6 +28,30 @@ export interface FixturesRepository {
   upsert(input: NewFixtureInput): Promise<Fixture>;
   getById(id: UUID): Promise<Fixture | undefined>;
   getByProviderIdentity(provider: string, providerFixtureId: string): Promise<Fixture | undefined>;
+  /**
+   * Section 05 — feature history building block. Every fixture (any
+   * status) where this team played home or away with
+   * `scheduledKickoffAt < beforeKickoff`, ordered ascending by
+   * `scheduledKickoffAt`. Bounds only by kickoff time — a fixture's
+   * *result* may still not have been known at a given snapshotTime even
+   * though its kickoff was in the past, so callers must independently
+   * check each fixture's MatchResult.resultRecordedAt against their own
+   * snapshotTime (see features/history.ts) before treating it as
+   * available. This method alone is not a leakage guarantee.
+   */
+  listForTeamBeforeKickoff(teamId: UUID, beforeKickoff: ISODateString): Promise<readonly Fixture[]>;
+  /**
+   * Section 05 — global chronological replay building block, needed
+   * specifically for Elo: a team's rating depends transitively on every
+   * opponent it has played, whose own ratings depend on their entire
+   * history in turn, so Elo cannot be computed from one team's fixtures
+   * alone. Every fixture (any two teams) with `scheduledKickoffAt <
+   * beforeKickoff`, ordered ascending. Same caveat as
+   * `listForTeamBeforeKickoff`: bounds only by kickoff time, not result
+   * availability — callers must still gate each fixture's MatchResult by
+   * `resultRecordedAt <= snapshotTime`.
+   */
+  listAllBeforeKickoff(beforeKickoff: ISODateString): Promise<readonly Fixture[]>;
 }
 
 export interface NewMatchResultInput {
@@ -44,6 +68,8 @@ export interface MatchResultsRepository {
   /** First write creates the row; a second write for the same fixture is treated as a provider correction (corrected_at/correction_count bumped), never silently overwritten. */
   upsert(input: NewMatchResultInput): Promise<MatchResult>;
   getByFixtureId(fixtureId: UUID): Promise<MatchResult | undefined>;
+  /** Section 05 — batch lookup for feature history (avoids N individual round-trips when walking a team's past fixtures). Order is not guaranteed; callers sort by the returned rows' own `resultRecordedAt`/fixture kickoff as needed. */
+  listForFixtureIds(fixtureIds: readonly UUID[]): Promise<readonly MatchResult[]>;
 }
 
 export interface NewMatchEventInput {
@@ -159,6 +185,18 @@ export class InMemoryFixturesRepository implements FixturesRepository {
     }
     return undefined;
   }
+
+  async listForTeamBeforeKickoff(teamId: UUID, beforeKickoff: ISODateString): Promise<readonly Fixture[]> {
+    const beforeMs = new Date(beforeKickoff).getTime();
+    return [...this.byId.values()]
+      .filter((f) => (f.homeTeamId === teamId || f.awayTeamId === teamId) && new Date(f.scheduledKickoffAt).getTime() < beforeMs)
+      .sort((a, b) => new Date(a.scheduledKickoffAt).getTime() - new Date(b.scheduledKickoffAt).getTime());
+  }
+
+  async listAllBeforeKickoff(beforeKickoff: ISODateString): Promise<readonly Fixture[]> {
+    const beforeMs = new Date(beforeKickoff).getTime();
+    return [...this.byId.values()].filter((f) => new Date(f.scheduledKickoffAt).getTime() < beforeMs).sort((a, b) => new Date(a.scheduledKickoffAt).getTime() - new Date(b.scheduledKickoffAt).getTime());
+  }
 }
 
 export class InMemoryMatchResultsRepository implements MatchResultsRepository {
@@ -184,6 +222,11 @@ export class InMemoryMatchResultsRepository implements MatchResultsRepository {
 
   async getByFixtureId(fixtureId: UUID): Promise<MatchResult | undefined> {
     return this.byFixtureId.get(fixtureId);
+  }
+
+  async listForFixtureIds(fixtureIds: readonly UUID[]): Promise<readonly MatchResult[]> {
+    const idSet = new Set(fixtureIds);
+    return [...this.byFixtureId.values()].filter((r) => idSet.has(r.fixtureId));
   }
 }
 
@@ -264,6 +307,23 @@ export class SupabaseFixturesRepository implements FixturesRepository {
     if (error || !data) return undefined;
     return fixtureRowToDomain(data as FixtureRow);
   }
+
+  async listForTeamBeforeKickoff(teamId: UUID, beforeKickoff: ISODateString): Promise<readonly Fixture[]> {
+    const { data, error } = await this.client
+      .from("fixtures")
+      .select("*")
+      .or(`home_team_id.eq.${teamId},away_team_id.eq.${teamId}`)
+      .lt("scheduled_kickoff_at", beforeKickoff)
+      .order("scheduled_kickoff_at", { ascending: true });
+    if (error || !data) return [];
+    return (data as readonly FixtureRow[]).map(fixtureRowToDomain);
+  }
+
+  async listAllBeforeKickoff(beforeKickoff: ISODateString): Promise<readonly Fixture[]> {
+    const { data, error } = await this.client.from("fixtures").select("*").lt("scheduled_kickoff_at", beforeKickoff).order("scheduled_kickoff_at", { ascending: true });
+    if (error || !data) return [];
+    return (data as readonly FixtureRow[]).map(fixtureRowToDomain);
+  }
 }
 
 export class SupabaseMatchResultsRepository implements MatchResultsRepository {
@@ -296,6 +356,13 @@ export class SupabaseMatchResultsRepository implements MatchResultsRepository {
     const { data, error } = await this.client.from("match_results").select("*").eq("fixture_id", fixtureId).maybeSingle();
     if (error || !data) return undefined;
     return matchResultRowToDomain(data as MatchResultRow);
+  }
+
+  async listForFixtureIds(fixtureIds: readonly UUID[]): Promise<readonly MatchResult[]> {
+    if (fixtureIds.length === 0) return [];
+    const { data, error } = await this.client.from("match_results").select("*").in("fixture_id", fixtureIds as string[]);
+    if (error || !data) return [];
+    return (data as readonly MatchResultRow[]).map(matchResultRowToDomain);
   }
 }
 

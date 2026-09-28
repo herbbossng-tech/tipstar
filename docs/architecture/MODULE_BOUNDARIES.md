@@ -14,7 +14,7 @@ only" means an interface exists with no default implementation at all
 | 1 | IdentityService | `@sport-os/platform` | `identity.ts` | **Real** (Section 03 — `DatabaseIdentityService` + `SupabaseUsersRepository`/`InMemoryUsersRepository`); `NotImplementedIdentityService` retained for any caller that hasn't migrated. Distinct from `TelegramAuthenticationService` below, which answers "who is this" for a single request/session, not "what account does this map to." |
 | 2 | LicenseService | `@sport-os/platform` | `license.ts` | **Real** (Section 03 — `DatabaseLicenseService` + Supabase/InMemory repositories for licenses/entitlements/limits); `licenseAllows()`/`isLicenseUsable()` decision rules are real and now also honor `startsAt` |
 | 3 | AgentService | `@sport-os/agent-core` | `agent-service.ts` | **Real** (`InMemoryAgentRegistry`) |
-| 4 | FootballService | `@sport-os/football-engine` | `service.ts` | NotImplemented (depends on Section 05's models/decision logic; the data layer it will eventually read from is now real — see "Football Data Boundary" below) |
+| 4 | FootballService | `@sport-os/football-engine` | `service.ts` | NotImplemented (depends on Section 07's decision logic; both the data layer and the full intelligence/prediction layer it will eventually read from are now real — see "Football Data Boundary" and "Football Intelligence Boundary" below) |
 | 5 | AviatorService | `@sport-os/aviator-engine` | `service.ts` | NotImplemented (depends on the whole Aviator pipeline) |
 | 6 | RiskService | `@sport-os/risk-engine` | `service.ts` | NotImplemented (sport-specific risk models). Note: `GlobalDailyRiskController` in the same package is **real** — it is a different, cross-sport concern. |
 | 7 | MarketService | `@sport-os/market-engine` | `service.ts` | NotImplemented (needs a real odds provider) |
@@ -122,13 +122,53 @@ above: it owns *data*, not predictions or decisions. See
 `docs/architecture/LEAKAGE_PROTECTION.md`.
 
 No live provider is connected — see
-`FOOTBALL_DATA_ARCHITECTURE.md`'s "Providers actually connected". Model/
-statistical/ML computation, feature engineering, ensemble, calibration,
-and decision logic (`feature-engineering.ts`, `feature-store.ts`,
-`models/*`, `ensemble.ts`, `calibration.ts`, `decision.ts`,
-`service.ts`) remain untouched, interface-only Section 01 placeholders —
-Section 05's job, per this section's explicit instruction not to
-pre-compute model features.
+`FOOTBALL_DATA_ARCHITECTURE.md`'s "Providers actually connected".
+Sport Agent decision logic (`decision.ts`, `service.ts`) remains
+untouched, interface-only Section 01 placeholders — Section 07's job.
+
+## Football Intelligence Boundary (Section 05)
+
+`@sport-os/football-engine`'s feature/model layer is real, built on top
+of the Football Data Boundary above:
+
+- **Feature store** — `features/*.ts` (Elo, Form, Rest/Schedule,
+  Home/Away, H2H, Odds families real; xG/Team Statistics/Standings
+  declared but disabled — no canonical data source yet),
+  `feature-engineering.ts`/`feature-store.ts`.
+- **Training dataset builder** — `dataset/builder.ts` (1X2/total-goals/
+  BTTS labels).
+- **Walk-forward validation** — `validation/walk-forward.ts` (chronological
+  only, expanding window).
+- **Baselines** — `baselines.ts` (naive/historical-frequency/Elo/
+  Poisson/market-implied).
+- **Statistical engine** — `statistical/poisson.ts`,
+  `statistical/dixon-coles.ts`.
+- **Monte Carlo** — `monte-carlo.ts` (seeded, deterministic).
+- **ML models** — `models/*.ts` (Random Forest, Gradient Boosted Trees,
+  Neural Network — all from-scratch TypeScript, no ML runtime
+  dependency; see `MODEL_VALIDATION.md`'s "ML runtime boundary").
+- **Ensemble** — `ensemble.ts` (configured-baseline or learned weights,
+  never arbitrary).
+- **Calibration** — `calibration.ts` (Platt + isotonic, time-safe
+  selection).
+- **Probability consistency** — `probability/consistency.ts` (fail-closed
+  validation every model output passes through).
+- **Evaluation framework** — `evaluation/*.ts` (predictive-quality
+  metrics only, no ROI/profit).
+- **Prediction output contract** — `output-contract.ts` (fair odds,
+  explicit probability-vs-confidence distinction, no certainty language).
+- **Persistence** — 6 new tables (`intelligence_dataset_versions`/
+  `intelligence_model_versions`/`intelligence_calibration_versions`/
+  `intelligence_ensemble_versions`/`intelligence_training_runs`/
+  `intelligence_evaluation_runs`), admin-only RLS, `service_role`
+  write-only — same pattern as Section 04's operational tables.
+
+This boundary owns *intelligence* (probabilities, versioned model
+artifacts, evaluation metrics) — not decisions. See
+`docs/architecture/FOOTBALL_INTELLIGENCE.md` and
+`docs/architecture/MODEL_VALIDATION.md` for the full design. No Sport
+Agent decision/ticket/value-selection/publishing logic, bookmaker
+execution, or SportyBet automation was built — Section 07's job.
 
 ## Football Settlement Boundary
 
@@ -141,9 +181,12 @@ the other automatically.
 
 ## What's explicitly deferred to later sections
 
-- All model/statistical/ML computation, feature engineering, ensemble,
-  calibration, decision logic (football-engine — deferred to Section 05
-  specifically; aviator-engine — no section assigned yet).
+- Sport Agent decision logic, ticket generation, value-selection
+  policy, publishing policy, bookmaker execution, SportyBet automation
+  (football-engine — deferred to Section 07; the full intelligence
+  layer feeding it is now real, see "Football Intelligence Boundary"
+  above). All model/statistical/ML computation for Aviator
+  (aviator-engine — no section assigned yet).
 - Real provider integrations (football data, odds — the adapter contract
   and pipeline are real as of Section 04, but no live credential exists;
   see `FOOTBALL_DATA_ARCHITECTURE.md`; Aviator data — untouched).

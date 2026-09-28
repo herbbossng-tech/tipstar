@@ -1,4 +1,4 @@
-# Database / RLS tests (Section 03 users/licenses; Section 04 football data)
+# Database / RLS tests (Section 03 users/licenses; Section 04 football data; Section 05 intelligence metadata)
 
 These validate `supabase/migrations/` directly against a real PostgreSQL
 server — no Supabase CLI, Docker, or PostgREST required. This is
@@ -33,9 +33,23 @@ rigorously via raw SQL without the HTTP layer as a confound.
   integrity constraints (distinct teams, no duplicate provider fixture,
   no negative goals, no non-positive odds, multiple odds observations
   preserved).
+- `50_intelligence_fixtures.sql` — Section 05 test data: one row each
+  in `intelligence_dataset_versions`/`intelligence_model_versions`/
+  `intelligence_calibration_versions`/`intelligence_ensemble_versions`/
+  `intelligence_evaluation_runs`/`intelligence_training_runs` — clearly
+  synthetic version strings (`*-test-v1`), never mixed with production
+  data.
+- `60_intelligence_rls_cases.sql` — intelligence metadata RLS cases:
+  admin-only read access on every table (never broad `authenticated`,
+  unlike Section 04's content tables — these are internal ML-pipeline
+  artifacts), the full "no client mutation" surface, service-role write
+  access (the real training/evaluation path), and DB-level integrity
+  constraints (unique model_family+model_version, unique
+  ensemble_version, walk-forward window chronology on training runs,
+  non-inverted calibration training ranges).
 - `run.sh` — applies the stubs, every migration in
-  `supabase/migrations/`, both fixture sets, and both test suites, in
-  order, against a scratch database.
+  `supabase/migrations/`, all three fixture sets, and all three test
+  suites, in order, against a scratch database.
 
 ## Running
 

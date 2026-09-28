@@ -37,8 +37,14 @@ sudo -u postgres psql -q -d "$DB_NAME" -v ON_ERROR_STOP=1 -f "$TEST_DIR/10_fixtu
 echo "== Loading fixtures (football data) =="
 sudo -u postgres psql -q -d "$DB_NAME" -v ON_ERROR_STOP=1 -f "$TEST_DIR/30_football_fixtures.sql"
 
+echo "== Loading fixtures (intelligence metadata) =="
+sudo -u postgres psql -q -d "$DB_NAME" -v ON_ERROR_STOP=1 -f "$TEST_DIR/50_intelligence_fixtures.sql"
+
 echo "== Running RLS test suite: users/licenses (read the transcript below against each test's stated expectation) =="
 sudo -u postgres psql -d "$DB_NAME" -f "$TEST_DIR/20_rls_cases.sql"
 
 echo "== Running RLS test suite: football data (read the transcript below against each test's stated expectation) =="
 sudo -u postgres psql -d "$DB_NAME" -f "$TEST_DIR/40_football_rls_cases.sql"
+
+echo "== Running RLS test suite: intelligence metadata (read the transcript below against each test's stated expectation) =="
+sudo -u postgres psql -d "$DB_NAME" -f "$TEST_DIR/60_intelligence_rls_cases.sql"
