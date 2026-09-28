@@ -1,0 +1,1 @@
+Reserved for cross-package settlement integration tests, once a real provider of match results exists. See `../README.md`. Package-level settlement rules tests (including the accumulator invariant) already live in `packages/settlement-engine/src/rules.test.ts`.
