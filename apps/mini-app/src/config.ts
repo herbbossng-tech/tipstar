@@ -1,4 +1,4 @@
-import { loadClientConfig } from "@sport-os/config";
+import { loadClientConfig } from "@sport-os/config/client";
 
 /**
  * Single point of access to client-safe configuration. Never read

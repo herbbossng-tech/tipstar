@@ -40,12 +40,34 @@ body {
 }
 
 .app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding: 16px;
   border-bottom: 1px solid var(--color-border);
 }
 
 .app-header__title {
   font-weight: 700;
+}
+
+.identity-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: var(--color-text-secondary);
+}
+
+.identity-badge__dev-tag {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger);
+  border-radius: 4px;
+  padding: 2px 4px;
 }
 
 .app-content {
@@ -115,6 +137,10 @@ body {
   background: var(--color-surface);
   color: var(--color-text-primary);
   cursor: pointer;
+}
+
+.button--secondary {
+  background: transparent;
 }
 
 .nav-bar {

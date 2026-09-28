@@ -15,3 +15,6 @@ port = 54323
 
 [functions.health]
 verify_jwt = false
+
+[functions.telegram-auth]
+verify_jwt = false

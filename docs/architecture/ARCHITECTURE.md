@@ -59,7 +59,8 @@ packages/
 ├── agent-core/            Agent contract, BaseAgent lifecycle state machine, AgentService registry
 ├── telegram/              initData validation (real HMAC), webhook secret verification,
 │                          destination validation, Publishing Policy Engine (real), Bot API
-│                          client (real), Destination Manager / PublishingService (NotImplemented)
+│                          client (real), Destination Manager / PublishingService (NotImplemented),
+│                          TelegramAuthenticationService + stateless session tokens (real, Section 02)
 ├── platform/              Identity, License (real decision rule + NotImplemented persistence),
 │                          GlobalExecutionGate (real orchestration), Audit (real, in-memory),
 │                          Health (real), Reporting (NotImplemented), Scheduling (contract only)
@@ -128,14 +129,19 @@ REPORTING / PERFORMANCE (derived only from real settled data)
 ## Security principles (locked)
 
 1. The frontend is never the security boundary — `apps/mini-app`'s
-   `AuthBoundary` is a structural placeholder, not a security control.
+   `AuthBoundary` (Section 02: a real state-machine-driven flow) only
+   *reflects* a server-verified identity; it never itself decides who a
+   user is. See `docs/architecture/TELEGRAM_AUTHENTICATION.md`.
 2. Secrets are server-side only — enforced today by
    `packages/config`'s `SERVER_ONLY_ENV_KEYS` and by `loadClientConfig()`
    only ever reading `VITE_`-prefixed vars.
 3. Telegram identity must be verified server-side —
    `@sport-os/telegram`'s `validateInitData()` is the only place a
-   Telegram user id may be trusted from; a client-asserted id is never
-   trusted directly.
+   Telegram user id may be trusted from; a client-asserted id (including
+   `initDataUnsafe`) is never trusted directly. See
+   `docs/architecture/TELEGRAM_AUTHENTICATION.md` for the full flow,
+   including the Section 02 `TelegramAuthenticationService` and session
+   token built on top of it.
 4. Authorization must be server-side — see `GlobalExecutionGate`.
 5. RLS will be mandatory when database tables are introduced (Section
    03+) — no table ships without it.
@@ -173,5 +179,6 @@ REPORTING / PERFORMANCE (derived only from real settled data)
 See also:
 - [`MODULE_BOUNDARIES.md`](./MODULE_BOUNDARIES.md)
 - [`OPEN_QUESTIONS.md`](./OPEN_QUESTIONS.md)
+- [`TELEGRAM_AUTHENTICATION.md`](./TELEGRAM_AUTHENTICATION.md)
 - [`../data/DATA_LEAKAGE_PRINCIPLE.md`](../data/DATA_LEAKAGE_PRINCIPLE.md)
 - [`../agents/AGENT_CORE.md`](../agents/AGENT_CORE.md)

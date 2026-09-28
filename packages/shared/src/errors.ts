@@ -20,6 +20,13 @@ export type ErrorKind = (typeof ErrorKind)[keyof typeof ErrorKind];
 
 export interface AppErrorInit {
   readonly message: string;
+  /**
+   * Optional fine-grained, machine-readable code, more specific than
+   * `kind` (e.g. "TELEGRAM_INIT_DATA_EXPIRED" within the broader
+   * `authentication_error` kind). Added in Section 02 — additive, every
+   * Section 01 caller that omits it is unaffected.
+   */
+  readonly code?: string;
   readonly context?: Record<string, unknown>;
   readonly correlationId?: string;
   readonly cause?: unknown;
@@ -27,6 +34,7 @@ export interface AppErrorInit {
 
 export class AppError extends Error {
   readonly kind: ErrorKind;
+  readonly code: string | undefined;
   readonly context: Readonly<Record<string, unknown>>;
   readonly timestamp: string;
   readonly correlationId: string | undefined;
@@ -35,6 +43,7 @@ export class AppError extends Error {
     super(init.message, init.cause !== undefined ? { cause: init.cause } : undefined);
     this.name = "AppError";
     this.kind = kind;
+    this.code = init.code;
     this.context = Object.freeze({ ...(init.context ?? {}) });
     this.timestamp = new Date().toISOString();
     this.correlationId = init.correlationId;
@@ -45,6 +54,7 @@ export class AppError extends Error {
     return {
       name: this.name,
       kind: this.kind,
+      code: this.code,
       message: this.message,
       context: this.context,
       timestamp: this.timestamp,

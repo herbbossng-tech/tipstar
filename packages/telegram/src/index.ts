@@ -4,3 +4,6 @@ export * from "./init-data.js";
 export * from "./webhook.js";
 export * from "./publishing-policy.js";
 export * from "./service.js";
+export * from "./authentication-service.js";
+export * from "./session.js";
+export * from "./dev-auth.js";

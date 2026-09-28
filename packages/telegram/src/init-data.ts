@@ -1,8 +1,16 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { AuthenticationError, err, ok, type Result } from "@sport-os/shared";
-import type { TelegramWebAppUser, ValidatedInitData } from "./types.js";
+import { TelegramAuthErrorCode, type TelegramWebAppUser, type ValidatedInitData } from "./types.js";
 
 const WEB_APP_DATA_KEY = "WebAppData";
+/** Conservative default — see TELEGRAM_INIT_DATA_CLOCK_SKEW_SECONDS in docs/environment-variables.md. */
+const DEFAULT_CLOCK_SKEW_SECONDS = 60;
+
+export interface ValidateInitDataOptions {
+  readonly maxAgeSeconds: number;
+  readonly clockSkewSeconds?: number;
+  readonly now?: Date;
+}
 
 /**
  * Validates a Telegram Mini App `initData` string server-side, per the
@@ -13,29 +21,33 @@ const WEB_APP_DATA_KEY = "WebAppData";
  *                        joined as "key=value" with "\n"
  *   expected_hash = HEX(HMAC_SHA256(key=secret_key, data=data_check_string))
  *
- * The request is rejected if the computed hash does not match, or if
- * `auth_date` is older than `maxAgeSeconds` (replay protection).
+ * The request is rejected if the computed hash does not match
+ * (timing-safe comparison), or if `auth_date` is outside the
+ * `[-clockSkewSeconds, +maxAgeSeconds]` window around `now` (replay
+ * protection + reject implausible future timestamps).
  *
  * This is the ONLY place Telegram identity may be trusted from (Section
- * 01 Security Principle 3: "Telegram identity must be verified
- * server-side"). A client-supplied Telegram user id with no validated
- * initData must never be trusted.
+ * 01 Security Principle 3 / Section 02 rule 5: "Telegram identity must be
+ * verified server-side"). A client-supplied Telegram user id with no
+ * validated initData must never be trusted.
  */
 export function validateInitData(
   initDataRaw: string,
   botToken: string,
-  options: { readonly maxAgeSeconds: number; readonly now?: Date } = { maxAgeSeconds: 86400 },
+  options: ValidateInitDataOptions = { maxAgeSeconds: 86400 },
 ): Result<ValidatedInitData, AuthenticationError> {
+  const clockSkewSeconds = options.clockSkewSeconds ?? DEFAULT_CLOCK_SKEW_SECONDS;
+
   let params: URLSearchParams;
   try {
     params = new URLSearchParams(initDataRaw);
   } catch {
-    return err(new AuthenticationError({ message: "Telegram initData could not be parsed." }));
+    return err(new AuthenticationError({ message: "Telegram initData could not be parsed.", code: TelegramAuthErrorCode.INIT_DATA_MALFORMED }));
   }
 
   const hash = params.get("hash");
   if (!hash) {
-    return err(new AuthenticationError({ message: "Telegram initData is missing a hash." }));
+    return err(new AuthenticationError({ message: "Telegram initData is missing a hash.", code: TelegramAuthErrorCode.INIT_DATA_INVALID }));
   }
 
   const entries: string[] = [];
@@ -49,20 +61,32 @@ export function validateInitData(
   const secretKey = createHmac("sha256", WEB_APP_DATA_KEY).update(botToken).digest();
   const computedHash = createHmac("sha256", secretKey).update(dataCheckString).digest("hex");
 
+  // Timing-safe comparison — an ordinary `===` would leak timing
+  // information about how many leading bytes matched (Section 02 rule 10).
   const hashesMatch = computedHash.length === hash.length && timingSafeEqual(Buffer.from(computedHash, "hex"), Buffer.from(hash, "hex"));
   if (!hashesMatch) {
-    return err(new AuthenticationError({ message: "Telegram initData signature is invalid." }));
+    return err(new AuthenticationError({ message: "Telegram initData signature is invalid.", code: TelegramAuthErrorCode.INIT_DATA_INVALID }));
   }
 
   const authDateRaw = params.get("auth_date");
   if (!authDateRaw) {
-    return err(new AuthenticationError({ message: "Telegram initData is missing auth_date." }));
+    return err(new AuthenticationError({ message: "Telegram initData is missing auth_date.", code: TelegramAuthErrorCode.INIT_DATA_MALFORMED }));
   }
-  const authDate = new Date(Number(authDateRaw) * 1000);
+  const authDateSeconds = Number(authDateRaw);
+  if (!Number.isFinite(authDateSeconds) || authDateSeconds <= 0) {
+    return err(new AuthenticationError({ message: "Telegram initData has a malformed auth_date.", code: TelegramAuthErrorCode.INIT_DATA_MALFORMED }));
+  }
+  const authDate = new Date(authDateSeconds * 1000);
   const now = options.now ?? new Date();
   const ageSeconds = (now.getTime() - authDate.getTime()) / 1000;
-  if (ageSeconds > options.maxAgeSeconds || ageSeconds < -60) {
-    return err(new AuthenticationError({ message: "Telegram initData has expired.", context: { ageSeconds } }));
+  if (ageSeconds > options.maxAgeSeconds || ageSeconds < -clockSkewSeconds) {
+    return err(
+      new AuthenticationError({
+        message: "Telegram initData has expired.",
+        code: TelegramAuthErrorCode.INIT_DATA_EXPIRED,
+        context: { ageSeconds, maxAgeSeconds: options.maxAgeSeconds, clockSkewSeconds },
+      }),
+    );
   }
 
   let user: TelegramWebAppUser | undefined;
@@ -71,7 +95,9 @@ export function validateInitData(
     try {
       user = JSON.parse(userRaw) as TelegramWebAppUser;
     } catch {
-      return err(new AuthenticationError({ message: "Telegram initData user field could not be parsed." }));
+      return err(
+        new AuthenticationError({ message: "Telegram initData user field could not be parsed.", code: TelegramAuthErrorCode.INIT_DATA_MALFORMED }),
+      );
     }
   }
 
