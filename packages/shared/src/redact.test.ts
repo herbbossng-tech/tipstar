@@ -19,6 +19,13 @@ describe("redact", () => {
     expect(result.password).toBe("[REDACTED]");
   });
 
+  it("redacts license keys regardless of key casing/style (Section 03)", () => {
+    const result = redact({ licenseKey: "LIC-abc", license_key: "LIC-abc", fullLicenseKey: "LIC-abc" }) as Record<string, unknown>;
+    expect(result.licenseKey).toBe("[REDACTED]");
+    expect(result.license_key).toBe("[REDACTED]");
+    expect(result.fullLicenseKey).toBe("[REDACTED]");
+  });
+
   it("leaves non-sensitive keys, including a safe telegramUserId, untouched", () => {
     const result = redact({ telegramUserId: 12345, username: "ada" }) as Record<string, unknown>;
     expect(result.telegramUserId).toBe(12345);

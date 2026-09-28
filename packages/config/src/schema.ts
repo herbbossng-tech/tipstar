@@ -30,6 +30,11 @@ export const envSchema = z
     SUPABASE_ANON_KEY: nonEmpty,
     SUPABASE_SERVICE_ROLE_KEY: optionalNonEmpty,
 
+    // Section 03 — one-time OWNER bootstrap. Absent by default, which
+    // makes bootstrapOwner() permanently unavailable — a safe, fail-
+    // closed default rather than something that must be required.
+    OWNER_BOOTSTRAP_SECRET: optionalNonEmpty,
+
     TELEGRAM_BOT_TOKEN: optionalNonEmpty,
     TELEGRAM_WEBHOOK_SECRET: optionalNonEmpty,
     // Telegram initData freshness window (Section 02 — replay protection).
@@ -102,4 +107,5 @@ export const SERVER_ONLY_ENV_KEYS = [
   "ODDS_API_KEY",
   "AVIATOR_DATA_API_KEY",
   "SESSION_SIGNING_SECRET",
+  "OWNER_BOOTSTRAP_SECRET",
 ] as const;

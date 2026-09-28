@@ -61,9 +61,12 @@ packages/
 │                          destination validation, Publishing Policy Engine (real), Bot API
 │                          client (real), Destination Manager / PublishingService (NotImplemented),
 │                          TelegramAuthenticationService + stateless session tokens (real, Section 02)
-├── platform/              Identity, License (real decision rule + NotImplemented persistence),
-│                          GlobalExecutionGate (real orchestration), Audit (real, in-memory),
-│                          Health (real), Reporting (NotImplemented), Scheduling (contract only)
+├── platform/              Identity (real, database-backed — Section 03), License (real decision
+│                          rule + real database-backed persistence, Section 03), Roles/Authorization
+│                          (real, Section 03), Owner bootstrap (real, Section 03),
+│                          GlobalExecutionGate (real orchestration), Audit (real, in-memory AND
+│                          real database-backed — Section 03), Health (real), Reporting
+│                          (NotImplemented), Scheduling (contract only)
 ├── risk-engine/           GlobalDailyRiskController (real) + sport-agnostic RiskService (NotImplemented)
 ├── market-engine/         Odds/market data boundary (NotImplemented)
 ├── football-engine/       ingestion, data-quality, feature-engineering, feature-store, models/
@@ -142,9 +145,16 @@ REPORTING / PERFORMANCE (derived only from real settled data)
    `docs/architecture/TELEGRAM_AUTHENTICATION.md` for the full flow,
    including the Section 02 `TelegramAuthenticationService` and session
    token built on top of it.
-4. Authorization must be server-side — see `GlobalExecutionGate`.
-5. RLS will be mandatory when database tables are introduced (Section
-   03+) — no table ships without it.
+4. Authorization must be server-side — see `GlobalExecutionGate`, and
+   (Section 03) `@sport-os/platform`'s admin operations, each of which
+   checks caller authorization before performing anything. See
+   `docs/architecture/AUTHORIZATION.md`.
+5. RLS is mandatory on every application table — enforced starting
+   Section 03: `users`, `licenses`, `license_entitlements`,
+   `license_limits`, `auth_sessions`, `audit_logs`, and
+   `platform_settings` all have RLS enabled with no
+   `USING (true)`/`WITH CHECK (true)` policy anywhere. See
+   `docs/architecture/DATABASE_AND_RLS.md`.
 6. Execution requires explicit authorization — every check in
    `GlobalExecutionGate`'s pipeline must return `{ allowed: true }`
    before an agent may execute.
@@ -170,15 +180,30 @@ REPORTING / PERFORMANCE (derived only from real settled data)
   not a computation.
 - No real-money execution, bookmaker automation, or CAPTCHA/anti-bot
   bypass exists anywhere in this codebase.
-- No production database schema exists (`supabase/migrations` is empty)
-  — Section 03's job.
 - No fabricated prediction, odds, or performance data exists anywhere,
   including in tests (test fixtures use clearly synthetic values, e.g.
   `"Test Agent"`/`ticket-1`, never numbers presented as real statistics).
+
+## Section 03 boundaries
+
+- `supabase/migrations/` now has a real, non-empty production schema —
+  see `docs/architecture/DATABASE_AND_RLS.md`.
+- No fake users, licenses, or seed production customers were created —
+  `supabase/seed/` remains empty; every test fixture (`tests/database/`,
+  `*.test.ts`) uses clearly synthetic ids/names.
+- Still no football/Aviator prediction logic, bookmaker execution, or
+  SportyBet automation — unchanged from Section 01.
+- `GlobalExecutionGate` still has no real identity/license/risk checks
+  wired into its pipeline — Section 03 built the real `IdentityService`/
+  `LicenseService` implementations the gate *could* use, but connecting
+  them is not this section's job (see `AUTHORIZATION.md`).
 
 See also:
 - [`MODULE_BOUNDARIES.md`](./MODULE_BOUNDARIES.md)
 - [`OPEN_QUESTIONS.md`](./OPEN_QUESTIONS.md)
 - [`TELEGRAM_AUTHENTICATION.md`](./TELEGRAM_AUTHENTICATION.md)
+- [`DATABASE_AND_RLS.md`](./DATABASE_AND_RLS.md)
+- [`LICENSING.md`](./LICENSING.md)
+- [`AUTHORIZATION.md`](./AUTHORIZATION.md)
 - [`../data/DATA_LEAKAGE_PRINCIPLE.md`](../data/DATA_LEAKAGE_PRINCIPLE.md)
 - [`../agents/AGENT_CORE.md`](../agents/AGENT_CORE.md)

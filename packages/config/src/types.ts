@@ -24,6 +24,10 @@ export interface AppConfig {
     readonly signingSecret: string | undefined;
     readonly tokenTtlSeconds: number;
   };
+  readonly ownerBootstrap: {
+    /** Present only when loaded via loadServerConfig(). Undefined = bootstrap permanently unavailable. Never expose to the client bundle. */
+    readonly secret: string | undefined;
+  };
   readonly devAuth: {
     readonly mode: "enabled" | "disabled";
   };

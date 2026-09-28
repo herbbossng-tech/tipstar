@@ -146,6 +146,80 @@ lost on a hard refresh by design; the Mini App re-authenticates against
 `window.Telegram.WebApp.initData` on every load anyway, since Telegram
 re-issues a fresh `initData` each time the Mini App is opened.
 
+## Session architecture (Section 03 update)
+
+Section 03 explicitly evaluated the three options it names — A. keep
+stateless, B. add persistent session records, C. hybrid — against
+revocation, logout, expiry, device/session limits, owner/admin forced
+logout, compromised-session handling, and Supabase integration.
+
+**Decision: C, hybrid.** Section 02's token format, `issueAuthSession()`,
+and `verifyAuthSession()` are **completely unchanged** — no Section 02
+contract was touched. A new table, `public.auth_sessions`
+(`supabase/migrations/20260928120500_auth_sessions.sql`), adds a
+persistence layer on top:
+
+```
+session_id   -- matches the sessionId already embedded in the token's signed payload
+token_hash   -- sha256(token) — NEVER the raw token (the spec's explicit requirement)
+issued_at, expires_at, revoked_at, revoked_reason
+```
+
+Verification becomes two checks in sequence
+(`verifyAuthSessionWithRevocation()`, `packages/telegram/src/session-store.ts`,
+additive — a new function, not a change to the existing one):
+
+1. **Stateless** (unchanged): HMAC signature + expiry, exactly as
+   Section 02 does it — fast, no I/O.
+2. **Store-backed** (new): does `auth_sessions` have a row for this
+   `sessionId`, with a matching `token_hash`, not revoked, not expired?
+   "Not found" is treated as revoked — this fails closed, never open.
+
+This answers each dimension the spec asked about:
+
+- **Revocation / logout**: `AuthSessionStore.revoke(sessionId, reason)` —
+  real, immediate (the very next request using that token is rejected by
+  the store check, without waiting for the stateless token to expire).
+- **Owner/admin forced logout**: `revokeAllForUser(userId, reason)` — not
+  yet wired into an admin operation or UI (no admin console exists this
+  section — see `MODULE_BOUNDARIES.md`), but the primitive is real and
+  tested (`session-store.test.ts`'s "revokeAllForUser" case).
+- **Device/session limits**: see "Device limit foundation" below —
+  `auth_sessions` gives Section 04+ everything needed to *count* a user's
+  active sessions if device limits are ever enforced; this section does
+  not enforce them.
+- **Compromised session handling**: revoke by `sessionId` (single
+  session) or by `userId` (every session) — both real, both tested.
+- **Supabase integration**: `SupabaseAuthSessionStore`
+  (`packages/platform/src/db/supabase-session-store.ts`) implements the
+  same `AuthSessionStore` interface against real Supabase tables;
+  `InMemoryAuthSessionStore` (`packages/telegram`) implements it for fast
+  unit tests. Both are real, not placeholders — this mirrors Section 01's
+  `InMemoryAgentRegistry`/`InMemoryAuditService` pattern.
+
+**What's still a real limitation, by design**: the stateless check (step
+1) still runs first and is unconditionally trusted for signature/expiry
+— a token's cryptographic validity is never in question. What Section 03
+adds is the *authority to say "no" anyway* even when the token is
+cryptographically valid, which is exactly what "revocation" means. This
+fully resolves `OPEN_QUESTIONS.md`'s former #4 ("cannot be revoked before
+expiry") for the stateless-only Section 02 design; it does not by itself
+add Supabase Auth / RLS-reachable sessions — that remains open (see
+`AUTHORIZATION.md`'s "RLS identity helper" section and
+`OPEN_QUESTIONS.md`).
+
+### Device limit foundation
+
+`licenses.max_devices` exists (Section 03's schema) but is **not
+enforced** — doing so would require either trusting a client-supplied
+device fingerprint (explicitly forbidden: "do not fake device
+fingerprinting... do not create invasive fingerprinting just to satisfy
+the field") or defining "a device" in terms of `auth_sessions` rows
+(e.g. "no more than N non-revoked sessions per user"), which is a real,
+buildable design but a product decision this section wasn't asked to
+make. Documented here as the limitation the spec asked to have
+documented, not silently worked around.
+
 ## A config addition beyond the section spec: `SESSION_SIGNING_SECRET`
 
 The section's brief didn't name a specific env var for signing session
@@ -211,22 +285,26 @@ route renders until the boundary reaches `authenticated` or
 `dev_authenticated`; every other state renders a loading/error/prompt
 screen instead.
 
-## What this section deliberately does not do
+## What Section 02 deliberately did not do (see Section 03 updates above for what changed)
 
-- No user table, no persistence of any identity — `AuthenticatedTelegramIdentity`
-  is a value, not a stored record. Section 03's job.
-- No connection to `LicenseService`/`Entitlement` — authentication answers
-  "who is this," not "what are they allowed to do." `GlobalExecutionGate`
-  remains the only place authorization decisions are made, and it still
-  has no real checks wired in (Section 01's `identity`/`license` gate
-  checks are still test doubles).
-- No revocable session store (see "Session architecture" above).
+- ~~No user table, no persistence of any identity~~ — **superseded by
+  Section 03**: `public.users` exists, and `upsertAuthenticatedTelegramUser()`
+  persists it. See `DATABASE_AND_RLS.md`.
+- No connection to `LicenseService`/`Entitlement` from *this* package —
+  still true of `@sport-os/telegram` itself, but Section 03's
+  `@sport-os/platform` now has a real, database-backed `LicenseService`.
+  `GlobalExecutionGate` still has no real checks wired in (Section 01's
+  `identity`/`license` gate checks are still test doubles) — connecting
+  the gate itself to real license/entitlement checks remains later work.
+- ~~No revocable session store~~ — **superseded by Section 03**: see
+  "Session architecture (Section 03 update)" above.
 - No rate limiting beyond a single-isolate, best-effort, in-memory fixed
   window (`packages/shared/src/rate-limit.ts` on the Node side; a mirrored
   version in the Deno function) — explicitly documented as insufficient
-  for a real distributed deployment. A production deployment needs a
-  shared store (e.g. Redis, or a Supabase-backed counter) for this to be
-  a real control rather than defense-in-depth.
+  for a real distributed deployment, and **still true after Section 03**.
+  A production deployment needs a shared store (e.g. Redis, or a
+  Supabase-backed counter) for this to be a real control rather than
+  defense-in-depth. Tracked in `OPEN_QUESTIONS.md`.
 
 ## See also
 
@@ -234,5 +312,10 @@ screen instead.
   point here for the concrete mechanism.
 - [`MODULE_BOUNDARIES.md`](./MODULE_BOUNDARIES.md) — where
   `TelegramAuthenticationService` sits among the 14 named boundaries.
+- [`DATABASE_AND_RLS.md`](./DATABASE_AND_RLS.md) — the `users`/
+  `auth_sessions` tables this section's identity/session flow now
+  persists to.
+- [`AUTHORIZATION.md`](./AUTHORIZATION.md) — what happens after
+  authentication: roles, license/entitlement/limit checks, RLS.
 - [`OPEN_QUESTIONS.md`](./OPEN_QUESTIONS.md) — former question #4,
   resolved here for now; new questions this section raised.

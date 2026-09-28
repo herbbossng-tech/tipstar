@@ -23,6 +23,7 @@ export interface ApiRequestOptions {
   readonly method?: "GET" | "POST" | "PUT" | "DELETE";
   readonly body?: unknown;
   readonly timeoutMs?: number;
+  readonly headers?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -40,7 +41,7 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
   try {
     response = await fetch(`${clientConfig.apiBaseUrl}${path}`, {
       method: options.method ?? "GET",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...options.headers },
       body: options.body !== undefined ? JSON.stringify(options.body) : null,
       signal: controller.signal,
     });
@@ -61,8 +62,11 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
   }
 
   if (!response.ok) {
-    const errorPayload = payload as { error?: string; message?: string } | undefined;
-    throw new ApiError(errorPayload?.error ?? "request_failed", errorPayload?.message ?? "Something went wrong. Please try again.", response.status);
+    // Every Supabase Edge Function in this repo (telegram-auth, me,
+    // owner-bootstrap, health) responds with { error: { code, message } }
+    // on failure — match that shape exactly rather than a flat one.
+    const errorPayload = payload as { error?: { code?: string; message?: string } } | undefined;
+    throw new ApiError(errorPayload?.error?.code ?? "request_failed", errorPayload?.error?.message ?? "Something went wrong. Please try again.", response.status);
   }
 
   return payload as T;

@@ -10,6 +10,8 @@ const IDENTITY: AuthenticatedIdentity = {
   languageCode: "en",
   isPremium: false,
   authMode: "telegram",
+  role: "user",
+  status: "active",
 };
 
 const DEV_IDENTITY: AuthenticatedIdentity = { ...IDENTITY, telegramUserId: 999_999_999, authMode: "dev" };
