@@ -14,7 +14,7 @@ only" means an interface exists with no default implementation at all
 | 1 | IdentityService | `@sport-os/platform` | `identity.ts` | **Real** (Section 03 — `DatabaseIdentityService` + `SupabaseUsersRepository`/`InMemoryUsersRepository`); `NotImplementedIdentityService` retained for any caller that hasn't migrated. Distinct from `TelegramAuthenticationService` below, which answers "who is this" for a single request/session, not "what account does this map to." |
 | 2 | LicenseService | `@sport-os/platform` | `license.ts` | **Real** (Section 03 — `DatabaseLicenseService` + Supabase/InMemory repositories for licenses/entitlements/limits); `licenseAllows()`/`isLicenseUsable()` decision rules are real and now also honor `startsAt` |
 | 3 | AgentService | `@sport-os/agent-core` | `agent-service.ts` | **Real** (`InMemoryAgentRegistry`) |
-| 4 | FootballService | `@sport-os/football-engine` | `service.ts` | NotImplemented (depends on the whole football pipeline) |
+| 4 | FootballService | `@sport-os/football-engine` | `service.ts` | NotImplemented (depends on Section 05's models/decision logic; the data layer it will eventually read from is now real — see "Football Data Boundary" below) |
 | 5 | AviatorService | `@sport-os/aviator-engine` | `service.ts` | NotImplemented (depends on the whole Aviator pipeline) |
 | 6 | RiskService | `@sport-os/risk-engine` | `service.ts` | NotImplemented (sport-specific risk models). Note: `GlobalDailyRiskController` in the same package is **real** — it is a different, cross-sport concern. |
 | 7 | MarketService | `@sport-os/market-engine` | `service.ts` | NotImplemented (needs a real odds provider) |
@@ -105,6 +105,31 @@ caller supplies, which is why it's safe to implement for real in Section
 01 (see `docs/architecture/ARCHITECTURE.md`, Security Principle 8: it
 must sit above every automation agent).
 
+## Football Data Boundary (Section 04)
+
+`@sport-os/football-engine`'s data ingestion/normalization/quality/
+leakage-protection layer is real — canonical model (`canonical.ts`),
+provider-agnostic adapter contract (`provider.ts`), normalization
+(`normalize.ts`), ingestion orchestration (`ingestion.ts`),
+`DataQualityEngine` (`quality-engine.ts`), quarantine + multi-provider
+conflict detection (`repositories/quality.ts`, `conflicts.ts`),
+`LeakageGuard`'s point-in-time query contract (`leakage-guard.ts`), and
+Supabase/InMemory repositories for every entity
+(`repositories/*.ts`). This is a distinct boundary from `FootballService`
+above: it owns *data*, not predictions or decisions. See
+`docs/architecture/FOOTBALL_DATA_ARCHITECTURE.md`,
+`docs/architecture/DATA_QUALITY.md`, and
+`docs/architecture/LEAKAGE_PROTECTION.md`.
+
+No live provider is connected — see
+`FOOTBALL_DATA_ARCHITECTURE.md`'s "Providers actually connected". Model/
+statistical/ML computation, feature engineering, ensemble, calibration,
+and decision logic (`feature-engineering.ts`, `feature-store.ts`,
+`models/*`, `ensemble.ts`, `calibration.ts`, `decision.ts`,
+`service.ts`) remain untouched, interface-only Section 01 placeholders —
+Section 05's job, per this section's explicit instruction not to
+pre-compute model features.
+
 ## Football Settlement Boundary
 
 `Ticket`/`TicketSelection`/`MatchResult`/`Settlement` types, and the
@@ -116,8 +141,12 @@ the other automatically.
 
 ## What's explicitly deferred to later sections
 
-- All model/statistical/ML computation (football-engine, aviator-engine).
-- Real provider integrations (football data, odds, Aviator data).
+- All model/statistical/ML computation, feature engineering, ensemble,
+  calibration, decision logic (football-engine — deferred to Section 05
+  specifically; aviator-engine — no section assigned yet).
+- Real provider integrations (football data, odds — the adapter contract
+  and pipeline are real as of Section 04, but no live credential exists;
+  see `FOOTBALL_DATA_ARCHITECTURE.md`; Aviator data — untouched).
 - Persistence for Telegram destinations, Ticket publication, Settlement,
   Reporting — Identity and License persistence landed in Section 03;
   these remain open.

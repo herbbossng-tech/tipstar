@@ -1,5 +1,22 @@
 import type { Environment } from "@sport-os/shared";
 
+/**
+ * Section 04 — Provider Configuration. Mirrors
+ * packages/football-engine/src/provider.ts's ProviderConfig shape at the
+ * env-var layer. `apiKey` is present only when loaded via
+ * loadServerConfig() and must never reach a browser bundle.
+ */
+export interface FootballDataProviderEnvConfig {
+  readonly name: string | undefined;
+  readonly apiKey: string | undefined;
+  readonly enabled: boolean;
+  readonly baseUrl: string | undefined;
+  readonly timeoutMs: number;
+  readonly maxRetries: number;
+  readonly rateLimitPerMinute: number | undefined;
+  readonly pollIntervalSeconds: number | undefined;
+}
+
 export interface AppConfig {
   readonly app: {
     readonly env: Environment;
@@ -32,8 +49,8 @@ export interface AppConfig {
     readonly mode: "enabled" | "disabled";
   };
   readonly providers: {
-    readonly football: { readonly name: string | undefined; readonly apiKey: string | undefined };
-    readonly odds: { readonly name: string | undefined; readonly apiKey: string | undefined };
+    readonly football: FootballDataProviderEnvConfig;
+    readonly odds: FootballDataProviderEnvConfig;
     readonly aviator: { readonly name: string | undefined; readonly apiKey: string | undefined };
   };
   readonly integrations: {

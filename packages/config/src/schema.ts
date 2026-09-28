@@ -57,8 +57,27 @@ export const envSchema = z
 
     FOOTBALL_DATA_PROVIDER: optionalNonEmpty,
     FOOTBALL_DATA_API_KEY: optionalNonEmpty,
+    // Section 04 — Provider Configuration. No live provider is connected
+    // yet (see docs/architecture/FOOTBALL_DATA_ARCHITECTURE.md), so these
+    // are unused placeholders today, exactly like FOOTBALL_DATA_PROVIDER
+    // above since Section 01 — present so a real adapter's ProviderConfig
+    // (packages/football-engine/src/provider.ts) has somewhere to read
+    // enabled/baseUrl/timeout/retry/rate-limit/poll-interval from once
+    // one exists, without a later section needing to touch this schema.
+    FOOTBALL_DATA_ENABLED: z.enum(["true", "false"]).default("false"),
+    FOOTBALL_DATA_BASE_URL: optionalNonEmpty,
+    FOOTBALL_DATA_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
+    FOOTBALL_DATA_MAX_RETRIES: z.coerce.number().int().nonnegative().default(2),
+    FOOTBALL_DATA_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().optional(),
+    FOOTBALL_DATA_POLL_INTERVAL_SECONDS: z.coerce.number().int().positive().optional(),
     ODDS_PROVIDER: optionalNonEmpty,
     ODDS_API_KEY: optionalNonEmpty,
+    ODDS_ENABLED: z.enum(["true", "false"]).default("false"),
+    ODDS_BASE_URL: optionalNonEmpty,
+    ODDS_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
+    ODDS_MAX_RETRIES: z.coerce.number().int().nonnegative().default(2),
+    ODDS_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().optional(),
+    ODDS_POLL_INTERVAL_SECONDS: z.coerce.number().int().positive().optional(),
     AVIATOR_DATA_PROVIDER: optionalNonEmpty,
     AVIATOR_DATA_API_KEY: optionalNonEmpty,
 

@@ -10,7 +10,9 @@
   },
   "dependencies": {
     "@sport-os/market-engine": "*",
-    "@sport-os/shared": "*"
+    "@sport-os/platform": "*",
+    "@sport-os/shared": "*",
+    "@supabase/supabase-js": "^2.45.4"
   },
   "devDependencies": {
     "typescript": "^5.7.2",

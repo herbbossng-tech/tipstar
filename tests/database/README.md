@@ -1,4 +1,4 @@
-# Database / RLS tests (Section 03)
+# Database / RLS tests (Section 03 users/licenses; Section 04 football data)
 
 These validate `supabase/migrations/` directly against a real PostgreSQL
 server — no Supabase CLI, Docker, or PostgREST required. This is
@@ -23,9 +23,19 @@ rigorously via raw SQL without the HTTP layer as a confound.
   a few DB-integrity bonus checks), each run in its own
   `BEGIN ... ROLLBACK` transaction so nothing persists and one test's
   expected permission error never aborts the rest.
+- `30_football_fixtures.sql` — Section 04 test data: a competition,
+  season, two teams, a scheduled fixture, an ingestion run, and one odds
+  observation — clearly synthetic (`test_fixture_provider`), never mixed
+  with production data.
+- `40_football_rls_cases.sql` — football data RLS cases: authenticated
+  read access, the full "no client mutation" surface (fixtures, results,
+  odds), admin-only operational tables (`ingestion_runs`), and DB-level
+  integrity constraints (distinct teams, no duplicate provider fixture,
+  no negative goals, no non-positive odds, multiple odds observations
+  preserved).
 - `run.sh` — applies the stubs, every migration in
-  `supabase/migrations/`, the fixtures, and the test suite, in order,
-  against a scratch database.
+  `supabase/migrations/`, both fixture sets, and both test suites, in
+  order, against a scratch database.
 
 ## Running
 
