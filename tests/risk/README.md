@@ -1,0 +1,1 @@
+Reserved for cross-package risk integration tests (e.g. GlobalDailyRiskController gating a sport-specific automation agent), once automation agents exist. See `../README.md`. Package-level GlobalDailyRiskController tests already live in `packages/risk-engine/src/global-daily-risk-controller.test.ts`.

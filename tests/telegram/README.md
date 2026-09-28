@@ -1,0 +1,1 @@
+Reserved for cross-package Telegram integration tests (e.g. Publishing Policy Engine wired to a real destination catalog), once Section 03 adds persistence. See `../README.md`. Package-level Telegram tests already live in `packages/telegram/src/*.test.ts`.
