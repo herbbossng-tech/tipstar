@@ -115,17 +115,20 @@ Deno.serve(async (req: Request) => {
   // Best-effort only, from here on: the one-time bootstrap state
   // transition has already been committed by the RPC above, so an audit
   // write failure must never change (or roll back) the success response.
-  try {
-    await supabase.from("audit_logs").insert({
-      actor_user_id: session.user_id,
-      action: "owner_bootstrapped",
-      resource_type: "user",
-      resource_id: session.user_id,
-      outcome: "success",
-      metadata: {},
-    });
-  } catch {
-    // Audit persistence is best-effort per platform audit policy — swallow.
+  // supabase-js resolves with { error } on a DB-level failure (RLS,
+  // constraint, etc.) rather than throwing — a bare try/catch around
+  // .insert() would never actually observe that failure, so the returned
+  // error is checked explicitly here instead.
+  const { error: auditError } = await supabase.from("audit_logs").insert({
+    actor_user_id: session.user_id,
+    action: "owner_bootstrapped",
+    resource_type: "user",
+    resource_id: session.user_id,
+    outcome: "success",
+    metadata: {},
+  });
+  if (auditError) {
+    console.error("owner-bootstrap: best-effort audit write failed", auditError.message);
   }
 
   return jsonResponse({ identity: { role: "owner" } }, 200);

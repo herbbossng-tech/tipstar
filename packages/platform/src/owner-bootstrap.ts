@@ -42,7 +42,12 @@ export interface PlatformSettingsRepository {
  * implementation's coherent claim-and-promote behavior — the JS
  * single-threaded event loop guarantees the check-then-set below runs
  * with no intervening await, so it faithfully models the atomicity the
- * real Postgres function provides via row-level locking.
+ * real Postgres function provides via row-level locking. It also mirrors
+ * the real function's rollback semantics: the claim is only durable once
+ * `promote` has actually succeeded — if it throws, the slot reverts to
+ * unclaimed and the error propagates, exactly as a failed promotion
+ * aborts (and rolls back) the whole Postgres transaction, claim
+ * included, in claim_owner_bootstrap.
  */
 export class InMemoryPlatformSettingsRepository implements PlatformSettingsRepository {
   private bootstrappedAt: string | undefined;
@@ -56,7 +61,14 @@ export class InMemoryPlatformSettingsRepository implements PlatformSettingsRepos
   async claimAndPromoteOwner(userId: UUID): Promise<boolean> {
     if (this.bootstrappedAt !== undefined) return false;
     this.bootstrappedAt = new Date().toISOString();
-    await this.promote?.(userId);
+    try {
+      await this.promote?.(userId);
+    } catch (error) {
+      // Roll back the claim — a failed promotion must never leave the
+      // one-time slot consumed with nobody actually promoted.
+      this.bootstrappedAt = undefined;
+      throw error;
+    }
     return true;
   }
 }

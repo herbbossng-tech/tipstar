@@ -108,4 +108,33 @@ describe("bootstrapOwner", () => {
     expect(late.ok).toBe(false);
     if (!late.ok) expect(late.error.code).toBe("OWNER_BOOTSTRAP_ALREADY_DONE");
   });
+
+  it("regression: a failed promotion rolls back the claim — the slot is NOT consumed, and a subsequent valid attempt on the SAME repository instance can still claim it", async () => {
+    // Mirrors the real claim_owner_bootstrap Postgres function's
+    // rollback semantics: the claim and the promotion are one coherent
+    // operation, so a promotion failure must leave the slot unclaimed,
+    // never permanently (and wrongly) consumed with nobody promoted.
+    const users = new InMemoryUsersRepository();
+    let userIdThatShouldFailPromotion: string | undefined;
+    const settings = new InMemoryPlatformSettingsRepository(async (userId) => {
+      if (userId === userIdThatShouldFailPromotion) {
+        throw new Error("simulated promotion failure");
+      }
+      await users.updateRole(userId, Role.OWNER);
+    });
+    const failing = await users.upsertFromTelegram({ telegramUserId: 1, username: undefined, firstName: "A", lastName: undefined, languageCode: undefined, isPremium: false, authenticatedAt: new Date().toISOString() });
+    userIdThatShouldFailPromotion = failing.id;
+
+    await expect(settings.claimAndPromoteOwner(failing.id)).rejects.toThrow("simulated promotion failure");
+    expect(await settings.isOwnerBootstrapped()).toBe(false);
+
+    // A subsequent, genuinely successful attempt — on the SAME repository
+    // instance — must still be able to claim.
+    const succeeding = await users.upsertFromTelegram({ telegramUserId: 2, username: undefined, firstName: "B", lastName: undefined, languageCode: undefined, isPremium: false, authenticatedAt: new Date().toISOString() });
+    const claimed = await settings.claimAndPromoteOwner(succeeding.id);
+    expect(claimed).toBe(true);
+    expect(await settings.isOwnerBootstrapped()).toBe(true);
+    const promoted = await users.findById(succeeding.id);
+    expect(promoted?.role).toBe(Role.OWNER);
+  });
 });
