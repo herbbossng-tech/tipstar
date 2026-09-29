@@ -1,5 +1,5 @@
 const SENSITIVE_KEY_PATTERN =
-  /token|secret|password|api[_-]?key|service[_-]?role|authorization|credential|private[_-]?key|init[_-]?data|raw[_-]?init/i;
+  /token|secret|password|api[_-]?key|service[_-]?role|authorization|credential|private[_-]?key|init[_-]?data|raw[_-]?init|license[_-]?key/i;
 const REDACTED = "[REDACTED]";
 
 /**

@@ -10,7 +10,9 @@
   },
   "dependencies": {
     "@sport-os/agent-core": "*",
-    "@sport-os/shared": "*"
+    "@sport-os/shared": "*",
+    "@sport-os/telegram": "*",
+    "@supabase/supabase-js": "^2.45.4"
   },
   "devDependencies": {
     "typescript": "^5.7.2",

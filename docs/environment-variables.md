@@ -10,7 +10,7 @@ access live in `packages/config` (`loadServerConfig()` / `loadClientConfig()`).
 | `VITE_APP_NAME`, `VITE_API_BASE_URL` | yes (Mini App) | no | Vite only exposes `VITE_`-prefixed vars to the client — this is the entire client-safe surface. |
 | `SUPABASE_URL` | yes | no | Safe for the Mini App bundle. |
 | `SUPABASE_ANON_KEY` | yes | no | Safe for the Mini App bundle. |
-| `SUPABASE_SERVICE_ROLE_KEY` | production only | **yes** | Bypasses RLS — never import `loadServerConfig()` from `apps/mini-app`. |
+| `SUPABASE_SERVICE_ROLE_KEY` | production only | **yes** | Bypasses RLS — never import `loadServerConfig()` from `apps/mini-app`. As of Section 03, genuinely used: every Edge Function (`telegram-auth`, `me`, `owner-bootstrap`) and `@sport-os/platform`'s repositories construct their Supabase client with it. |
 | `TELEGRAM_BOT_TOKEN` | production only | **yes** | Bot API calls and Mini App initData HMAC validation. |
 | `TELEGRAM_WEBHOOK_SECRET` | production only | **yes** | Must match the `secret_token` passed to Telegram's `setWebhook`. |
 | `TELEGRAM_INIT_DATA_MAX_AGE_SECONDS` | no (default `86400`) | no | Replay-protection freshness window for Telegram `initData` (Section 02). |
@@ -19,6 +19,7 @@ access live in `packages/config` (`loadServerConfig()` / `loadClientConfig()`).
 | `SESSION_TOKEN_TTL_SECONDS` | no (default `86400`) | no | How long an issued session token stays valid. |
 | `DEV_AUTH_MODE` | no (default `disabled`) | no | Server-side gate for the dev-mode Telegram auth bypass. **Never usable when `APP_ENV=production`** regardless of this value — `loadServerConfig()` refuses to load such a combination at all. |
 | `VITE_DEV_AUTH_MODE` | no (default `disabled`) | no | Client-visible mirror of `DEV_AUTH_MODE` — only controls whether the Mini App *shows* a dev-login affordance; it grants no capability on its own, since the server re-verifies `DEV_AUTH_MODE` independently. |
+| `OWNER_BOOTSTRAP_SECRET` | no (default: unset) | **yes** | Section 03. One-time OWNER-promotion secret, compared with a timing-safe comparison. Absent by default — bootstrap is then permanently unavailable, a safe fail-closed default, *not* something that must be set. See `docs/architecture/AUTHORIZATION.md`. |
 | `FOOTBALL_DATA_PROVIDER`, `FOOTBALL_DATA_API_KEY` | no | key is **yes** | Provider not selected/integrated yet (Section 01). |
 | `ODDS_PROVIDER`, `ODDS_API_KEY` | no | key is **yes** | |
 | `AVIATOR_DATA_PROVIDER`, `AVIATOR_DATA_API_KEY` | no | key is **yes** | |

@@ -11,8 +11,8 @@ only" means an interface exists with no default implementation at all
 
 | # | Service | Package | File | Status |
 |---|---|---|---|---|
-| 1 | IdentityService | `@sport-os/platform` | `identity.ts` | NotImplemented (needs persistence — Section 03). Distinct from `TelegramAuthenticationService` below, which answers "who is this" for a single request/session, not "what account does this map to." |
-| 2 | LicenseService | `@sport-os/platform` | `license.ts` | NotImplemented persistence; `licenseAllows()` decision rule is **real** |
+| 1 | IdentityService | `@sport-os/platform` | `identity.ts` | **Real** (Section 03 — `DatabaseIdentityService` + `SupabaseUsersRepository`/`InMemoryUsersRepository`); `NotImplementedIdentityService` retained for any caller that hasn't migrated. Distinct from `TelegramAuthenticationService` below, which answers "who is this" for a single request/session, not "what account does this map to." |
+| 2 | LicenseService | `@sport-os/platform` | `license.ts` | **Real** (Section 03 — `DatabaseLicenseService` + Supabase/InMemory repositories for licenses/entitlements/limits); `licenseAllows()`/`isLicenseUsable()` decision rules are real and now also honor `startsAt` |
 | 3 | AgentService | `@sport-os/agent-core` | `agent-service.ts` | **Real** (`InMemoryAgentRegistry`) |
 | 4 | FootballService | `@sport-os/football-engine` | `service.ts` | NotImplemented (depends on the whole football pipeline) |
 | 5 | AviatorService | `@sport-os/aviator-engine` | `service.ts` | NotImplemented (depends on the whole Aviator pipeline) |
@@ -23,9 +23,11 @@ only" means an interface exists with no default implementation at all
 | 10 | TelegramService | `@sport-os/telegram` | `service.ts` | **Real** (`TelegramBotApiService`, a thin Bot API client) |
 | 11 | PublishingService | `@sport-os/telegram` | `service.ts` | NotImplemented (needs a persisted destination catalog). The Publishing Policy Engine (`publishing-policy.ts`) that decides *whether* a destination accepts content is **real**. |
 | 12 | ReportingService | `@sport-os/platform` | `reporting.ts` | NotImplemented (needs real settled data) |
-| 13 | AuditService | `@sport-os/platform` | `audit.ts` | **Real** (`InMemoryAuditService`) |
+| 13 | AuditService | `@sport-os/platform` | `audit.ts` | **Real**: `InMemoryAuditService` (Section 01, still used in tests) and `SupabaseAuditService` (Section 03, real persistence to `audit_logs`, metadata redacted before write) |
 | 14 | HealthService | `@sport-os/platform` | `health.ts` | **Real** (`buildHealthReport`); exposed via `supabase/functions/health` |
-| — | TelegramAuthenticationService | `@sport-os/telegram` | `authentication-service.ts` | **Real** (Section 02). Verifies raw `initData` and issues a stateless signed session token (`session.ts`); exposed via `supabase/functions/telegram-auth`. Not one of the blueprint's original 14 — added the same way `packages/config` and `packages/platform` were (see `ARCHITECTURE.md`'s "Why two packages beyond the eight the blueprint named" and `OPEN_QUESTIONS.md` #5). |
+| — | TelegramAuthenticationService | `@sport-os/telegram` | `authentication-service.ts` | **Real** (Section 02, extended Section 03). Verifies raw `initData`, issues a stateless signed session token (`session.ts`), now persisted for revocation (`session-store.ts`, Section 03); exposed via `supabase/functions/telegram-auth`, which also upserts the caller into `users` and audits the event. Not one of the blueprint's original 14 — added the same way `packages/config` and `packages/platform` were (see `ARCHITECTURE.md`'s "Why two packages beyond the eight the blueprint named" and `OPEN_QUESTIONS.md` #5). |
+| — | User admin / role management | `@sport-os/platform` | `user-admin.ts` | **Real** (Section 03). `suspendUser`/`reactivateUser`/`changeUserRole` — authorization-checked, audited. Not one of the blueprint's original 14 — see `AUTHORIZATION.md`. |
+| — | Owner bootstrap | `@sport-os/platform` | `owner-bootstrap.ts` | **Real** (Section 03). One-time, secret-gated, auditable OWNER promotion; exposed via `supabase/functions/owner-bootstrap`. See `AUTHORIZATION.md`. |
 
 ## Agent Core
 
@@ -64,16 +66,33 @@ gain real implementations.
 - `DefaultTelegramAuthenticationService` / `issueAuthSession()` /
   `verifyAuthSession()` / `isDevAuthModeUsable()` — real (Section 02); see
   `docs/architecture/TELEGRAM_AUTHENTICATION.md` for the full design.
+- `AuthSessionStore` / `InMemoryAuthSessionStore` /
+  `verifyAuthSessionWithRevocation()` — real (Section 03), additive to
+  the above (no Section 02 signature changed). Backing implementation
+  (`SupabaseAuthSessionStore`) lives in `@sport-os/platform`.
 
 ## Licensing Foundation
 
 `LicenseStatus` (`trial`/`active`/`suspended`/`expired`/`revoked`),
 `Role` (`owner`/`admin`/`user`), and `Entitlement` (the 9 named in the
-product definition) are fixed types. `licenseAllows(license, entitlement,
-now)` is a real, tested pure function: a license in good standing
-(`trial`/`active`), not expired, carrying the entitlement. It is not
-wired into any request path yet — that requires `IdentityService` and
-persistence.
+product definition) are fixed types, unchanged since Section 01.
+`licenseAllows(license, entitlement, now)` / `isLicenseUsable(license,
+now)` are real, tested pure functions. As of Section 03 this **is** wired
+into a real request path: `DatabaseLicenseService` +
+`SupabaseLicensesRepository`/`SupabaseLicenseEntitlementsRepository`/
+`SupabaseLicenseLimitsRepository`, exposed to the Mini App via
+`supabase/functions/me`. See `docs/architecture/LICENSING.md`.
+
+## Roles, User Status, and Database Persistence (Section 03)
+
+`UserRole`/`UserStatus` and the full `users`/`licenses`/
+`license_entitlements`/`license_limits`/`auth_sessions`/`audit_logs`/
+`platform_settings` schema, RLS policies, and the
+`@sport-os/platform` service layer built on top of them (identity
+upsert, admin operations, authorization guards, owner bootstrap) — see
+`docs/architecture/DATABASE_AND_RLS.md` and
+`docs/architecture/AUTHORIZATION.md` for the full design, and
+`tests/database/` for the RLS test suite.
 
 ## Global Daily Risk Controller
 
@@ -99,7 +118,19 @@ the other automatically.
 
 - All model/statistical/ML computation (football-engine, aviator-engine).
 - Real provider integrations (football data, odds, Aviator data).
-- Persistence for Identity, License, Telegram destinations, Ticket
-  publication, Settlement, Reporting (Section 03: database).
+- Persistence for Telegram destinations, Ticket publication, Settlement,
+  Reporting — Identity and License persistence landed in Section 03;
+  these remain open.
 - Real execution (any agent actually placing/confirming a wager).
 - A concrete `JobScheduler` implementation (contract only today).
+- `GlobalExecutionGate` wired to real identity/license/entitlement
+  checks (the real services now exist — Section 03 — but connecting the
+  gate to them is not this section's job).
+- Direct Supabase Auth / RLS-reachable Mini App requests (today's Mini
+  App traffic is entirely service-role-mediated via Edge Functions — see
+  `docs/architecture/DATABASE_AND_RLS.md`'s "RLS identity helper").
+- Device/session limit enforcement (`licenses.max_devices` exists;
+  nothing enforces it yet — see `TELEGRAM_AUTHENTICATION.md`'s "Device
+  limit foundation").
+- A full owner/admin dashboard UI (Section 03 built the backend
+  authorization foundation only, per the spec's explicit instruction).

@@ -1,22 +1,39 @@
 // Supabase Edge Function (Deno runtime).
 //
 // POST /telegram-auth -> a verified Telegram identity + a signed session
-// token (Section 02 — Telegram Authentication). Mirrors the validation,
-// authentication-service, and session algorithms in @sport-os/telegram —
-// Deno cannot import that npm workspace package directly without a
-// bundling step, so the algorithms are re-implemented here using Web
-// Crypto instead of node:crypto; keep both in sync if either changes. See
-// docs/architecture/TELEGRAM_AUTHENTICATION.md for the full rationale.
+// token (Section 02 — Telegram Authentication; Section 03 — Database +
+// RLS + Roles + Licensing adds the user upsert, session persistence, and
+// audit logging below). Mirrors the validation, authentication-service,
+// and session algorithms in @sport-os/telegram — Deno cannot import that
+// npm workspace package directly without a bundling step, so the
+// algorithms are re-implemented in ../_shared/ instead of node:crypto;
+// keep both in sync if either changes. See
+// docs/architecture/TELEGRAM_AUTHENTICATION.md and
+// docs/architecture/DATABASE_AND_RLS.md for the full rationale.
 //
-// Security invariants (do not weaken without updating the doc above):
+// Security invariants (do not weaken without updating the docs above):
 //   - Telegram identity is NEVER trusted from client-supplied fields —
 //     only from a server-side HMAC-validated `initData` string.
-//   - TELEGRAM_BOT_TOKEN / SESSION_SIGNING_SECRET are read from
-//     Deno.env only, never logged, never echoed in any response.
+//   - TELEGRAM_BOT_TOKEN / SESSION_SIGNING_SECRET / SUPABASE_SERVICE_ROLE_KEY
+//     are read from Deno.env only, never logged, never echoed in any
+//     response.
 //   - Dev-mode auth is only reachable when DEV_AUTH_MODE=enabled AND
 //     APP_ENV!=production, re-checked here independently of any client
 //     input, and always returns a FIXED synthetic identity — a client
 //     can never request an arbitrary Telegram user id.
+//   - The service-role Supabase client bypasses RLS entirely — every use
+//     of it below is for the one specific, narrow operation this
+//     function is already authorized to perform (upserting the caller's
+//     OWN row by their just-verified telegram_user_id, and persisting
+//     the session/audit rows this same request produced). It is never
+//     used to satisfy an arbitrary client-supplied query.
+//   - A new user's role/status are never read from the client — the
+//     database's own DEFAULT 'user'/'active' is what applies; this
+//     function's upsert payload has no role/status field at all.
+
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { fromHex, hmacSha256, sha256Hex, textEncoder, timingSafeEqualBytes } from "../_shared/crypto.ts";
+import { issueAuthSession, type AuthSession } from "../_shared/session.ts";
 
 const CORS_HEADERS = {
   "access-control-allow-origin": "*",
@@ -64,43 +81,6 @@ function jsonResponse(body: unknown, status: number): Response {
 
 function errorResponse(code: string, message: string, status: number): Response {
   return jsonResponse({ error: { code, message } }, status);
-}
-
-const textEncoder = new TextEncoder();
-
-async function hmacSha256(keyBytes: Uint8Array, data: string): Promise<Uint8Array> {
-  const key = await crypto.subtle.importKey("raw", keyBytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const signature = await crypto.subtle.sign("HMAC", key, textEncoder.encode(data));
-  return new Uint8Array(signature);
-}
-
-function fromHex(hex: string): Uint8Array {
-  const bytes = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < bytes.length; i++) {
-    bytes[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
-  }
-  return bytes;
-}
-
-// Constant-time byte comparison — an ordinary `===` would leak timing
-// information about how many leading bytes matched.
-function timingSafeEqualBytes(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) {
-    diff |= (a[i] ?? 0) ^ (b[i] ?? 0);
-  }
-  return diff === 0;
-}
-
-function base64urlFromBytes(bytes: Uint8Array): string {
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-function base64urlFromString(value: string): string {
-  return base64urlFromBytes(textEncoder.encode(value));
 }
 
 interface ValidatedInitData {
@@ -178,27 +158,82 @@ async function validateInitData(initDataRaw: string, botToken: string, maxAgeSec
   return { ok: true, value: { user, authDate } };
 }
 
-interface AuthSession {
-  readonly sessionId: string;
-  readonly telegramUserId: number;
-  readonly issuedAt: string;
-  readonly expiresAt: string;
-  readonly authenticatedAt: string;
+interface AppUserRecord {
+  id: string;
+  role: "owner" | "admin" | "user";
+  status: "active" | "suspended" | "disabled";
 }
 
-/** Stateless HMAC-signed session token — see packages/telegram/src/session.ts for the canonical implementation and rationale. */
-async function issueAuthSession(identity: AuthenticatedIdentity, secret: string, ttlSeconds: number): Promise<{ session: AuthSession; token: string }> {
-  const now = new Date();
-  const session: AuthSession = {
-    sessionId: crypto.randomUUID(),
-    telegramUserId: identity.telegramUserId,
-    issuedAt: now.toISOString(),
-    expiresAt: new Date(now.getTime() + ttlSeconds * 1000).toISOString(),
-    authenticatedAt: identity.verifiedAt,
-  };
-  const payload = base64urlFromString(JSON.stringify(session));
-  const signatureBytes = await hmacSha256(textEncoder.encode(secret), payload);
-  return { session, token: `${payload}.${base64urlFromBytes(signatureBytes)}` };
+/**
+ * The one place this function may create or update a `users` row —
+ * mirrors @sport-os/platform's upsertAuthenticatedTelegramUser() exactly
+ * (same guarantee: the payload has no role/status/id field, so a
+ * conflicting update can never touch them). See
+ * docs/architecture/DATABASE_AND_RLS.md's "Authentication → database
+ * identity".
+ */
+async function upsertAuthenticatedTelegramUser(client: SupabaseClient, identity: AuthenticatedIdentity): Promise<{ user: AppUserRecord; isNewUser: boolean }> {
+  const { data: existing } = await client.from("users").select("id").eq("telegram_user_id", identity.telegramUserId).maybeSingle();
+  const isNewUser = !existing;
+
+  const { data, error } = await client
+    .from("users")
+    .upsert(
+      {
+        telegram_user_id: identity.telegramUserId,
+        username: identity.username ?? null,
+        first_name: identity.firstName,
+        last_name: identity.lastName ?? null,
+        language_code: identity.languageCode ?? null,
+        is_premium: identity.isPremium ?? false,
+        last_authenticated_at: identity.verifiedAt,
+      },
+      { onConflict: "telegram_user_id" },
+    )
+    .select("id, role, status")
+    .single();
+
+  if (error || !data) {
+    throw new Error(`Failed to upsert authenticated user: ${error?.message ?? "unknown error"}`);
+  }
+  return { user: data as AppUserRecord, isNewUser };
+}
+
+async function persistAuthSession(client: SupabaseClient, userId: string, session: AuthSession, token: string): Promise<void> {
+  const tokenHash = await sha256Hex(token);
+  const { error } = await client.from("auth_sessions").insert({
+    user_id: userId,
+    session_id: session.sessionId,
+    token_hash: tokenHash,
+    issued_at: session.issuedAt,
+    expires_at: session.expiresAt,
+  });
+  if (error) {
+    throw new Error(`Failed to persist session: ${error.message}`);
+  }
+}
+
+async function recordAuditEvent(
+  client: SupabaseClient,
+  actorUserId: string | null,
+  action: string,
+  outcome: "success" | "failure" | "denied",
+  metadata: Record<string, unknown> = {},
+): Promise<void> {
+  // Best-effort: an audit-write failure must never block the
+  // authentication response it describes — logged to the function's own
+  // console (never containing secrets/raw initData) rather than thrown.
+  const { error } = await client.from("audit_logs").insert({
+    actor_user_id: actorUserId,
+    action,
+    resource_type: "user",
+    resource_id: actorUserId,
+    outcome,
+    metadata,
+  });
+  if (error) {
+    console.error("Failed to record audit event", action, error.message);
+  }
 }
 
 function isDevAuthModeUsable(appEnv: string, devAuthMode: string): boolean {
@@ -268,11 +303,17 @@ Deno.serve(async (req: Request) => {
   const devAuthMode = Deno.env.get("DEV_AUTH_MODE") ?? "disabled";
   const sessionSigningSecret = Deno.env.get("SESSION_SIGNING_SECRET");
   const sessionTokenTtlSeconds = Number(Deno.env.get("SESSION_TOKEN_TTL_SECONDS") ?? "86400");
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const supabaseServiceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
   if (!sessionSigningSecret) {
     // Never log/return *why* in more detail than this — no secret state to leak here anyway.
     return errorResponse(TelegramAuthErrorCode.AUTH_NOT_CONFIGURED, "Session signing is not configured.", 500);
   }
+  if (!supabaseUrl || !supabaseServiceRoleKey) {
+    return errorResponse(TelegramAuthErrorCode.AUTH_NOT_CONFIGURED, "Database access is not configured.", 500);
+  }
+  const supabase = createClient(supabaseUrl, supabaseServiceRoleKey, { auth: { persistSession: false, autoRefreshToken: false } });
 
   let identity: AuthenticatedIdentity;
 
@@ -297,6 +338,10 @@ Deno.serve(async (req: Request) => {
 
     const validated = await validateInitData(rawInitData, botToken, maxAgeSeconds, clockSkewSeconds);
     if (!validated.ok) {
+      // No user id is known yet at this point — actor_user_id is
+      // nullable precisely for this case. Never includes rawInitData or
+      // the bot token in metadata.
+      await recordAuditEvent(supabase, null, "telegram_authentication_failed", "failure", { code: validated.error.code });
       const status = validated.error.code === TelegramAuthErrorCode.INIT_DATA_EXPIRED ? 401 : 400;
       return errorResponse(validated.error.code, validated.error.message, status);
     }
@@ -318,7 +363,25 @@ Deno.serve(async (req: Request) => {
     };
   }
 
+  let user: AppUserRecord;
+  let isNewUser: boolean;
+  try {
+    ({ user, isNewUser } = await upsertAuthenticatedTelegramUser(supabase, identity));
+  } catch (error) {
+    console.error("Failed to upsert authenticated user", error);
+    return errorResponse("USER_UPSERT_FAILED", "Could not complete sign-in. Please try again.", 500);
+  }
+
   const issued = await issueAuthSession(identity, sessionSigningSecret, sessionTokenTtlSeconds);
+
+  try {
+    await persistAuthSession(supabase, user.id, issued.session, issued.token);
+  } catch (error) {
+    console.error("Failed to persist session", error);
+    return errorResponse("SESSION_PERSIST_FAILED", "Could not complete sign-in. Please try again.", 500);
+  }
+
+  await recordAuditEvent(supabase, user.id, isNewUser ? "telegram_user_created" : "telegram_user_authenticated", "success", { authMode: identity.authMode });
 
   return jsonResponse(
     {
@@ -330,6 +393,8 @@ Deno.serve(async (req: Request) => {
         languageCode: identity.languageCode,
         isPremium: identity.isPremium,
         authMode: identity.authMode,
+        role: user.role,
+        status: user.status,
       },
       session: { token: issued.token, expiresAt: issued.session.expiresAt },
     },

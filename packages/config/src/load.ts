@@ -31,6 +31,7 @@ export function loadServerConfig(source: Record<string, string | undefined> = pr
       initDataClockSkewSeconds: env.TELEGRAM_INIT_DATA_CLOCK_SKEW_SECONDS,
     },
     session: { signingSecret: env.SESSION_SIGNING_SECRET, tokenTtlSeconds: env.SESSION_TOKEN_TTL_SECONDS },
+    ownerBootstrap: { secret: env.OWNER_BOOTSTRAP_SECRET },
     devAuth: { mode: env.DEV_AUTH_MODE },
     providers: {
       football: { name: env.FOOTBALL_DATA_PROVIDER, apiKey: env.FOOTBALL_DATA_API_KEY },
