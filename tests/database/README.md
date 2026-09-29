@@ -1,4 +1,4 @@
-# Database / RLS tests (Section 03 users/licenses; Section 04 football data; Section 05 intelligence metadata)
+# Database / RLS tests (Section 03 users/licenses; Section 04 football data; Section 05 intelligence metadata; Section 06 agent framework)
 
 These validate `supabase/migrations/` directly against a real PostgreSQL
 server — no Supabase CLI, Docker, or PostgREST required. This is
@@ -71,8 +71,28 @@ rigorously via raw SQL without the HTTP layer as a confound.
   constraints (unique model_family+model_version, unique
   ensemble_version, walk-forward window chronology on training runs,
   non-inverted calibration training ranges).
+- `70_agent_fixtures.sql` — Section 06 test data: one
+  `agent_invocations` row (a completed Football Intelligence Agent
+  invocation), one `agent_messages` row (the command that triggered it),
+  and one `agent_idempotency_claims` row — clearly synthetic ids, never
+  mixed with production data. No test here performs a real `COMMIT` (see
+  "A fixture-isolation pitfall" below for why that matters), so none of
+  these fixtures are at risk of the incident that section describes.
+- `80_agent_rls_cases.sql` — agent framework RLS cases: admin-only read
+  access on `agent_invocations`/`agent_messages` (never broad
+  `authenticated`, matching Section 05's internal-artifact pattern),
+  `agent_idempotency_claims` withheld even from admins (service-role
+  only — it carries no content worth browsing, only concurrency-control
+  state), the full "no client mutation" surface, service-role write
+  access (the real orchestrator path), and DB-level integrity
+  constraints: the `(agent_type, idempotency_key)` unique index on
+  `agent_invocations` (and confirmation that the SAME key is allowed
+  again under a DIFFERENT `agent_type`, proving the scoping is real), the
+  CHECK constraint tying `failure_code`/`failure_disposition` presence
+  exactly to `status = 'failed'`, and `agent_idempotency_claims`' own
+  primary-key uniqueness.
 - `run.sh` — applies the stubs, every migration in
-  `supabase/migrations/`, all three fixture sets, and all three test
+  `supabase/migrations/`, all four fixture sets, and all four test
   suites, in order, against a scratch database.
 
 ## Running

@@ -1,3 +1,4 @@
+import { NotImplementedError } from "@sport-os/shared";
 import type { MarketType } from "@sport-os/market-engine";
 
 /**
@@ -20,4 +21,23 @@ export interface ValueAssessment {
 
 export interface DecisionEngine {
   assess(eventId: string, marketType: MarketType, selection: string): Promise<ValueAssessment>;
+}
+
+/**
+ * The explicit NOT_AVAILABLE stub (Section 06 — Football Decision/Ticket
+ * Agent, §9: "may request value calculations from the appropriate
+ * Section 07 boundary... must not bypass the Value Engine"). Additive,
+ * backward-compatible with Section 01's contract-only `DecisionEngine` —
+ * every method throws `NotImplementedError` rather than fabricating a
+ * value assessment, matching every other `NotImplemented*` stub in this
+ * codebase (`NotImplementedTicketService`, `NotImplementedMarketService`,
+ * ...). `@sport-os/agents`' Football Decision Agent depends on this
+ * interface via injection; when given this stub, it surfaces a typed
+ * DATA_UNAVAILABLE/INTEGRATION_UNAVAILABLE failure rather than
+ * proceeding, never a silently-invented value assessment.
+ */
+export class NotImplementedDecisionEngine implements DecisionEngine {
+  async assess(_eventId: string, _marketType: MarketType, _selection: string): Promise<ValueAssessment> {
+    throw new NotImplementedError("DecisionEngine.assess");
+  }
 }

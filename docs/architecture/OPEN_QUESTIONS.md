@@ -7,20 +7,23 @@ it." Nothing here is decided; each is a real ambiguity a later section
 (or a direct answer from the architect) needs to resolve before the
 dependent work can be built for real.
 
-## 1. What does "double bet" mean for Aviator?
+## 1. What does "double bet" mean for Aviator? — RESOLVED
 
-The Master Blueprint V1.0 excerpt available to this section names a
-"double bet" boundary in the Aviator Engine without defining it. At least
-two plausible readings exist:
-- Two concurrent stakes on the same round at different cash-out targets
-  (a spread strategy).
-- A martingale-style stake progression across rounds (doubling after a
-  loss).
-
-`packages/aviator-engine/src/double-bet.ts` fixes only that a strategy
-decision of this shape exists (`DoubleBetPlan`/`DoubleBetStrategy`); no
-strategy logic is implemented, and the type intentionally doesn't commit
-to either reading yet.
+**Resolved in Section 06.** Of the two readings Section 01 identified,
+Section 06's own spec locks the first one: two independent, concurrent
+targets on the same round — Target 1 and Target 2 — never a martingale
+stake progression across rounds. `packages/aviator-engine/src/double-bet.ts`
+now defines the concrete shape: `DoubleBetLeg` (each target's own
+stake/cash-out/actual-exit/return/pnl, tracked completely independently),
+`DoubleBetRecord` (the combined stake/return/net P&L/ROI, only populated
+once both legs settle), `buildDefaultDoubleBetLegs()` (the one place the
+locked 50/50 default split is enforced — a caller may still pass an
+explicit non-default `target1StakeWeight`, but nothing in this codebase
+does so without one), and `settleDoubleBetLeg()`/`combineDoubleBetLegs()`
+(real settlement arithmetic from an actual exit multiplier, never a
+fabricated one). `@sport-os/agents`' Aviator Automation Agent is the one
+caller that constructs a `DoubleBetRecord`, and only through these
+functions.
 
 ## 2. What are the real SportyBet integration modes?
 
@@ -241,3 +244,45 @@ weekly, after each matchday) and whether `@sport-os/platform`'s
 `JobScheduler` contract (still unimplemented — see question in
 `MODULE_BOUNDARIES.md`'s "What's explicitly deferred") is the right
 place to drive it.
+
+## 18. `@sport-os/settlement-engine` has no stake/payout amount anywhere
+
+Discovered building Section 06's Weekly Report Agent. `Ticket`/
+`Settlement`/`ExecutedWager` (`packages/settlement-engine/src/types.ts`)
+carry `WON`/`LOST`/`VOID`/`PUSH`/`PENDING`/`CANCELLED` status and a
+stake amount on `ExecutedWager`, but nowhere is there a real *return*/
+*payout* amount for a settled ticket — only the outcome. **Consequence:**
+the Weekly Report Agent's `predictionWinRate` (a real, honest number —
+WON vs LOST counts) is the only thing it can compute; `executedWager
+Performance` is always `undefined` rather than a fabricated P&L/ROI —
+see `docs/architecture/AGENT_CONTRACTS.md`'s Weekly Report Agent entry.
+Contrast with Aviator: `DoubleBetRecord` (added Section 06,
+`aviator-engine/double-bet.ts`) DOES carry real `totalReturn`/`netPnl`/
+`roi` once both legs settle, because its settlement arithmetic is
+self-contained (stake × actual exit multiplier) and never depended on a
+missing field. **Next decision point:** before any real football-side
+P&L/ROI/drawdown reporting can exist, `Settlement` (or a new, related
+type) needs a real payout amount field — a Section 07/08 concern, since
+it requires deciding how a partial-leg accumulator payout is computed
+(a genuine "settlement calculation," explicitly out of Section 06's
+scope).
+
+## 19. Agent workflow persistence beyond a single invocation
+
+Section 06's `AgentInvocationRecord`/`InvocationStatus` track ONE
+invocation's lifecycle (IDLE → RUNNING → COMPLETED/FAILED, with a
+`WAITING` state for a human-confirmation boundary) durably. A genuine
+multi-step workflow that spans several invocations across time (e.g. "a
+ticket proposal is created now, waits for a human's ASSISTED
+confirmation that may arrive minutes or hours later, then triggers
+execution") is representable today only by the CALLER holding the
+`correlationId` and dispatching a second, separate COMMAND once
+confirmation arrives — there is no durable, resumable "workflow" entity
+tying multiple invocations together beyond their shared
+`correlationId` (`AgentInvocationsRepository.listByCorrelationId()`).
+**Reason:** the spec's §28 "Potential tables" lists `agent_workflows` as
+optional ("add migrations only where required"), and no concrete
+multi-step workflow exists yet to require one. **Next decision point:**
+if/when Section 07+ needs a durable, resumable multi-invocation workflow
+(rather than the caller re-dispatching), design `agent_workflows` then,
+informed by that real use case rather than a speculative one now.

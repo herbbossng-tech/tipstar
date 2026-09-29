@@ -4,6 +4,17 @@ import type { ISODateString, UUID } from "@sport-os/shared";
  * Every agent named in the Master Blueprint V1.0 product definition.
  * Adding a new agent means adding one value here — nothing else in this
  * package needs to change (Section 01 — Agent Core Foundation).
+ *
+ * `GLOBAL_DAILY_RISK_CONTROLLER` is deliberately never given a concrete
+ * `Agent` implementation (Section 06 — Agent Architecture, §4:
+ * "Global Daily Risk Controller is NOT an unrestricted autonomous agent.
+ * It remains a centralized risk-control service governed by the existing
+ * GlobalExecutionGate architecture. Do not create a second independent
+ * global risk authority."). The value stays defined here only so it
+ * remains a documented, reservable `AgentType` — `@sport-os/risk-engine`'s
+ * `GlobalDailyRiskController` is the one real authority; `@sport-os/agents`'
+ * Aviator Risk Agent consults it directly rather than wrapping it as a
+ * peer agent.
  */
 export const AgentType = {
   FOOTBALL_INTELLIGENCE: "football_intelligence",

@@ -77,4 +77,10 @@ describe("BaseAgent lifecycle", () => {
     expect(response.requestId).toBe("req-1");
     expect(response.output.doubled).toBe(42);
   });
+
+  it("markReady() (Section 06 convenience) reaches READY in one call, equivalent to the documented two-step path", () => {
+    const agent = buildAgent();
+    agent.markReady();
+    expect(agent.status).toBe(AgentStatus.READY);
+  });
 });
