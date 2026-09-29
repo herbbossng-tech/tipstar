@@ -110,6 +110,104 @@ describe("InMemoryFixturesRepository", () => {
       expect(await repo.getByIdAsOf(generateId(), "2026-01-10T18:00:00Z")).toBeUndefined();
     });
   });
+
+  describe("fixture identity immutability regression (PR review fix — item 3)", () => {
+    it("a repeat sighting reporting a different competition/season/home/away team never rewrites the stored identity", async () => {
+      const repo = new InMemoryFixturesRepository();
+      const originalCompetitionId = generateId();
+      const originalSeasonId = generateId();
+      const originalHomeTeamId = generateId();
+      const originalAwayTeamId = generateId();
+      const input = {
+        competitionId: originalCompetitionId,
+        seasonId: originalSeasonId,
+        homeTeamId: originalHomeTeamId,
+        awayTeamId: originalAwayTeamId,
+        scheduledKickoffAt: "2026-01-10T19:00:00Z",
+        status: "scheduled" as const,
+        providerStatusRaw: "NS",
+        provider: "identity_test",
+        providerFixtureId: "IDENT-1",
+      };
+      const first = await repo.upsert(input);
+
+      const repeatWithDifferentIdentity = await repo.upsert({
+        ...input,
+        competitionId: generateId(),
+        seasonId: generateId(),
+        homeTeamId: generateId(),
+        awayTeamId: generateId(),
+        status: "live",
+        providerStatusRaw: "1H",
+      });
+
+      expect(repeatWithDifferentIdentity.id).toBe(first.id);
+      // Identity is exactly what it was on first sighting — the repeat
+      // sighting's (different) identity fields are ignored entirely.
+      expect(repeatWithDifferentIdentity.competitionId).toBe(originalCompetitionId);
+      expect(repeatWithDifferentIdentity.seasonId).toBe(originalSeasonId);
+      expect(repeatWithDifferentIdentity.homeTeamId).toBe(originalHomeTeamId);
+      expect(repeatWithDifferentIdentity.awayTeamId).toBe(originalAwayTeamId);
+      // Status DID legitimately change — this repository-level guard is
+      // narrowly about identity, not a blanket refusal to update.
+      expect(repeatWithDifferentIdentity.status).toBe("live");
+    });
+  });
+
+  describe("atomic fixture upsert regression (PR review fix — item 1)", () => {
+    it("a failed status-observation write leaves NO partial fixture-state mutation on a first sighting", async () => {
+      const failure = new Error("simulated history write failure");
+      const repo = new InMemoryFixturesRepository(() => {
+        throw failure;
+      });
+      const input = {
+        competitionId: generateId(),
+        seasonId: undefined,
+        homeTeamId: generateId(),
+        awayTeamId: generateId(),
+        scheduledKickoffAt: "2026-01-10T19:00:00Z",
+        status: "scheduled" as const,
+        providerStatusRaw: "NS",
+        provider: "atomic_test",
+        providerFixtureId: "ATOMIC-1",
+      };
+
+      await expect(repo.upsert(input)).rejects.toThrow(failure);
+      // Nothing committed at all — not even a partially-formed fixture.
+      expect(await repo.getByProviderIdentity("atomic_test", "ATOMIC-1")).toBeUndefined();
+    });
+
+    it("a failed status-observation write leaves the PRIOR fixture state committed, never the new one, on a repeat sighting", async () => {
+      let shouldFail = false;
+      const failure = new Error("simulated history write failure");
+      const repo = new InMemoryFixturesRepository(() => {
+        if (shouldFail) throw failure;
+      });
+      const input = {
+        competitionId: generateId(),
+        seasonId: undefined,
+        homeTeamId: generateId(),
+        awayTeamId: generateId(),
+        scheduledKickoffAt: "2026-01-10T19:00:00Z",
+        status: "scheduled" as const,
+        providerStatusRaw: "NS",
+        provider: "atomic_test",
+        providerFixtureId: "ATOMIC-2",
+      };
+      const first = await repo.upsert(input); // succeeds — shouldFail is still false
+      expect(first.status).toBe("scheduled");
+
+      shouldFail = true;
+      await expect(repo.upsert({ ...input, status: "finished", providerStatusRaw: "FT" })).rejects.toThrow(failure);
+
+      // The failed attempt to transition to "finished" must not have
+      // stuck — the fixture is still exactly as the first, successful
+      // upsert left it.
+      const after = await repo.getByProviderIdentity("atomic_test", "ATOMIC-2");
+      expect(after?.status).toBe("scheduled");
+      expect(after?.providerStatusRaw).toBe("NS");
+    });
+  });
 });
 
 describe("InMemoryMatchResultsRepository", () => {
@@ -199,6 +297,26 @@ describe("InMemoryMatchResultsRepository", () => {
       const { repo, fixtureId } = await buildCorrectedFixture();
       expect((await repo.getLatest(fixtureId))?.homeGoals).toBe(2);
       expect(await repo.getAsOf(fixtureId, SNAPSHOT_TIME)).toBeUndefined();
+    });
+
+    it("(c') resolves deterministically when two versions share the EXACT SAME resultRecordedAt — always the most recently inserted one", async () => {
+      const repo = new InMemoryMatchResultsRepository();
+      const fixtureId = generateId();
+      const SAME_TIMESTAMP = "2026-01-10T19:55:00Z";
+      await repo.insert({ fixtureId, homeGoals: 1, awayGoals: 1, halftimeHomeGoals: undefined, halftimeAwayGoals: undefined, resultRecordedAt: SAME_TIMESTAMP, source: "test" });
+      const secondTied = await repo.insert({ fixtureId, homeGoals: 3, awayGoals: 3, halftimeHomeGoals: undefined, halftimeAwayGoals: undefined, resultRecordedAt: SAME_TIMESTAMP, source: "test" });
+
+      // Called repeatedly to prove the resolution is stable/repeatable,
+      // not merely "happened to be right once".
+      for (let i = 0; i < 5; i++) {
+        const resolved = await repo.getAsOf(fixtureId, SAME_TIMESTAMP);
+        expect(resolved?.id).toBe(secondTied.id);
+        expect(resolved?.homeGoals).toBe(3);
+        expect(resolved?.awayGoals).toBe(3);
+
+        const latest = await repo.getLatest(fixtureId);
+        expect(latest?.id).toBe(secondTied.id);
+      }
     });
   });
 });

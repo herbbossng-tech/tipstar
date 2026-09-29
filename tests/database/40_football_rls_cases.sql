@@ -188,3 +188,106 @@ select home_goals, away_goals from public.match_results
   where fixture_id = 'f1000000-0000-0000-0000-000000000001' and result_recorded_at <= '2026-01-10T21:00:00Z'
   order by result_recorded_at desc limit 1;
 rollback;
+
+-- ============================================================
+-- FB TESTs 22-27: PR review HARDENING fix — Atomic Fixture Upsert,
+-- Deterministic Match-Result Version Ordering, Fixture Identity
+-- Immutability. See repositories.test.ts and ingestion.test.ts for the
+-- equivalent TypeScript-level regression tests; these confirm the same
+-- guarantees hold against the real Postgres function/schema, not just
+-- the in-memory test double.
+-- ============================================================
+
+\echo '--- FB TEST 22a: anon cannot execute upsert_fixture_with_status_observation (expect ERROR permission denied) ---'
+begin;
+set local role anon;
+select public.upsert_fixture_with_status_observation(
+  'c0000000-0000-0000-0000-000000000001', null,
+  '7ea00000-0000-0000-0000-000000000001', '7ea00000-0000-0000-0000-000000000002',
+  now(), 'scheduled', 'NS', 'test_fixture_provider', 'RPC-PERM-1', now());
+rollback;
+
+\echo '--- FB TEST 22b: authenticated cannot execute upsert_fixture_with_status_observation (expect ERROR permission denied) ---'
+begin;
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"11111111-1111-1111-1111-111111111111"}';
+select public.upsert_fixture_with_status_observation(
+  'c0000000-0000-0000-0000-000000000001', null,
+  '7ea00000-0000-0000-0000-000000000001', '7ea00000-0000-0000-0000-000000000002',
+  now(), 'scheduled', 'NS', 'test_fixture_provider', 'RPC-PERM-2', now());
+rollback;
+
+\echo '--- FB TEST 23: service_role CAN atomically upsert a fixture + its status observation as one operation (expect status=scheduled, then 1 matching observation row) ---'
+begin;
+set local role service_role;
+select status from public.upsert_fixture_with_status_observation(
+  'c0000000-0000-0000-0000-000000000001', '5e000000-0000-0000-0000-000000000001',
+  '7ea00000-0000-0000-0000-000000000001', '7ea00000-0000-0000-0000-000000000002',
+  '2026-04-01T19:00:00Z', 'scheduled', 'NS', 'test_fixture_provider', 'RPC-ATOMIC-1', '2026-03-25T00:00:00Z');
+select count(*) from public.fixture_status_observations fso
+  join public.fixtures f on f.id = fso.fixture_id
+  where f.provider = 'test_fixture_provider' and f.provider_fixture_id = 'RPC-ATOMIC-1';
+rollback;
+
+\echo '--- FB TEST 24: ATOMIC FIXTURE UPSERT FIX — a failed status-observation write rolls back the fixtures write too, as one coherent operation (expect ERROR not-null violation, then 0 fixtures rows for ATOMIC-TEST-1) ---'
+begin;
+set local role service_role;
+select * from public.upsert_fixture_with_status_observation(
+  'c0000000-0000-0000-0000-000000000001', '5e000000-0000-0000-0000-000000000001',
+  '7ea00000-0000-0000-0000-000000000001', '7ea00000-0000-0000-0000-000000000002',
+  '2026-01-10T19:00:00Z', 'scheduled', 'NS', 'test_fixture_provider', 'ATOMIC-TEST-1', null);
+rollback;
+
+begin;
+set local role service_role;
+select count(*) from public.fixtures where provider = 'test_fixture_provider' and provider_fixture_id = 'ATOMIC-TEST-1';
+rollback;
+
+\echo '--- FB TEST 25: DETERMINISTIC MATCH-RESULT VERSION ORDERING FIX — two versions sharing the exact same result_recorded_at resolve deterministically via version_seq (expect the later-inserted 3-3, consistently across repeated queries) ---'
+begin;
+set local role service_role;
+insert into public.match_results (fixture_id, home_goals, away_goals, result_recorded_at, source) values
+  ('f1000000-0000-0000-0000-000000000001', 1, 1, '2026-01-10T19:55:00Z', 'test_fixture_provider');
+insert into public.match_results (fixture_id, home_goals, away_goals, result_recorded_at, source, corrected_at, correction_count) values
+  ('f1000000-0000-0000-0000-000000000001', 3, 3, '2026-01-10T19:55:00Z', 'test_fixture_provider', now(), 1);
+
+select home_goals, away_goals from public.match_results
+  where fixture_id = 'f1000000-0000-0000-0000-000000000001' and result_recorded_at <= '2026-01-10T19:55:00Z'
+  order by result_recorded_at desc, version_seq desc limit 1;
+
+select home_goals, away_goals from public.match_results
+  where fixture_id = 'f1000000-0000-0000-0000-000000000001' and result_recorded_at <= '2026-01-10T19:55:00Z'
+  order by result_recorded_at desc, version_seq desc limit 1;
+rollback;
+
+\echo '--- FB TEST 26: FIXTURE IDENTITY IMMUTABILITY FIX — a repeat sighting reporting different home/away teams never rewrites the fixtures row (expect team ids unchanged on both reads; status legitimately updated to live) ---'
+begin;
+set local role service_role;
+select home_team_id, away_team_id, status from public.upsert_fixture_with_status_observation(
+  'c0000000-0000-0000-0000-000000000001', '5e000000-0000-0000-0000-000000000001',
+  '7ea00000-0000-0000-0000-000000000001', '7ea00000-0000-0000-0000-000000000002',
+  '2026-04-02T19:00:00Z', 'scheduled', 'NS', 'test_fixture_provider', 'RPC-IDENTITY-1', '2026-03-25T00:00:00Z');
+
+-- Repeat sighting, SAME provider_fixture_id, but swapped home/away teams
+-- — must be silently ignored for identity, while status legitimately updates.
+select home_team_id, away_team_id, status from public.upsert_fixture_with_status_observation(
+  'c0000000-0000-0000-0000-000000000001', '5e000000-0000-0000-0000-000000000001',
+  '7ea00000-0000-0000-0000-000000000002', '7ea00000-0000-0000-0000-000000000001',
+  '2026-04-02T19:00:00Z', 'live', '1H', 'test_fixture_provider', 'RPC-IDENTITY-1', '2026-04-02T19:05:00Z');
+rollback;
+
+\echo '--- FB TEST 27: an unchanged repeat sighting appends NO new fixture_status_observations row (expect 1 row total, not 2) ---'
+begin;
+set local role service_role;
+select public.upsert_fixture_with_status_observation(
+  'c0000000-0000-0000-0000-000000000001', '5e000000-0000-0000-0000-000000000001',
+  '7ea00000-0000-0000-0000-000000000001', '7ea00000-0000-0000-0000-000000000002',
+  '2026-04-03T19:00:00Z', 'scheduled', 'NS', 'test_fixture_provider', 'RPC-NOCHANGE-1', '2026-03-25T00:00:00Z');
+select public.upsert_fixture_with_status_observation(
+  'c0000000-0000-0000-0000-000000000001', '5e000000-0000-0000-0000-000000000001',
+  '7ea00000-0000-0000-0000-000000000001', '7ea00000-0000-0000-0000-000000000002',
+  '2026-04-03T19:00:00Z', 'scheduled', 'NS', 'test_fixture_provider', 'RPC-NOCHANGE-1', '2026-03-26T00:00:00Z');
+select count(*) from public.fixture_status_observations fso
+  join public.fixtures f on f.id = fso.fixture_id
+  where f.provider = 'test_fixture_provider' and f.provider_fixture_id = 'RPC-NOCHANGE-1';
+rollback;

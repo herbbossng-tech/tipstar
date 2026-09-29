@@ -45,7 +45,16 @@ rigorously via raw SQL without the HTTP layer as a confound.
   by `asOf` across scheduled/live/finished transitions (never a future
   status in an earlier snapshot), and `match_results` allows — and
   correctly resolves by `asOf` — multiple append-only versions per
-  fixture (never a correction leaking through an earlier snapshot).
+  fixture (never a correction leaking through an earlier snapshot). FB
+  TESTs 22–27 (added as a further PR review hardening fix) cover the
+  `upsert_fixture_with_status_observation` atomic RPC: EXECUTE lockdown,
+  the fixture-plus-observation write succeeding as one coherent
+  operation, a failed observation write rolling back the fixture write
+  too (TEST 24, following the same commit-then-fresh-transaction pattern
+  as `20_rls_cases.sql`'s TEST 23c), `version_seq` resolving two
+  same-timestamp match-result versions deterministically, a repeat
+  sighting never rewriting fixture identity fields, and an unchanged
+  repeat sighting recording no redundant observation row.
 - `run.sh` — applies the stubs, every migration in
   `supabase/migrations/`, both fixture sets, and both test suites, in
   order, against a scratch database.

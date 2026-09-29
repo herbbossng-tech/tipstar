@@ -111,6 +111,16 @@ export interface Team {
   readonly updatedAt: ISODateString;
 }
 
+/**
+ * competitionId/seasonId/homeTeamId/awayTeamId are the fixture's
+ * IDENTITY — immutable once set, exactly like scheduledKickoffAt. A
+ * repeat sighting reporting a different identity for an existing
+ * provider_fixture_id is not a legitimate update; FixturesRepository
+ * never rewrites these fields on a repeat upsert, and ingestion.ts
+ * quarantines a raw record whose resolved identity disagrees with what's
+ * already on file (see FOOTBALL_DATA_ARCHITECTURE.md's "Fixture identity
+ * immutability").
+ */
 export interface Fixture {
   readonly id: UUID;
   readonly competitionId: UUID;

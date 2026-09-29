@@ -185,6 +185,17 @@ layer:
   test double), plus RLS coverage for the new
   `fixture_status_observations` table.
 
+A further review round hardened both fixes: the fixture upsert and its
+status observation are now one atomic Postgres function call (never two
+round-trips that could commit independently), match-result versions
+sharing the exact same `resultRecordedAt` resolve deterministically via
+a `version_seq` tiebreaker, and a fixture's identity fields
+(competition/season/home/away team) are immutable, with a repeat
+sighting reporting a different identity quarantined rather than
+silently applied. See `FOOTBALL_DATA_ARCHITECTURE.md`'s "Hardening
+pass" section and `tests/database/40_football_rls_cases.sql` FB TESTs
+22–27.
+
 ## What this does *not* do
 
 - It does not build any feature from this data — no rolling windows,

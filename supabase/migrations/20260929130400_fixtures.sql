@@ -70,12 +70,29 @@ create table public.match_results (
   source text not null,
   corrected_at timestamptz null,
   correction_count integer not null default 0,
+  -- Deterministic tiebreaker (PR review fix — Deterministic Match-Result
+  -- Version Ordering). result_recorded_at is the temporal "known-at"
+  -- field a point-in-time query filters on, but two versions CAN share
+  -- the exact same result_recorded_at (e.g. a provider re-reports at the
+  -- same nominal timestamp) — without a secondary sort key, `ORDER BY
+  -- result_recorded_at DESC LIMIT 1` has no guaranteed winner among
+  -- ties, so which row getAsOf()/getLatest() return would be
+  -- unspecified. version_seq is a plain auto-incrementing identity
+  -- column with no temporal meaning of its own — it exists purely to
+  -- make "the most recently inserted of the tied versions wins"
+  -- deterministic, mirroring the in-memory repository's already-
+  -- deterministic array-insertion-order behavior. Never conflate this
+  -- with created_at (a plain timestamp column is not itself a reliable
+  -- total order — clock resolution/skew can produce ties too) or with
+  -- result_recorded_at (the temporal field, which this does not
+  -- replace).
+  version_seq integer generated always as identity,
   created_at timestamptz not null default now()
 );
 
 comment on table public.match_results is
-  'Append-only result versions — many rows per fixture_id are expected (the original plus one per correction). Never UPDATEd after insert. The point-in-time-safe read is "the row with the greatest result_recorded_at <= asOf" (see SupabaseMatchResultsRepository.getAsOf); "current" reads use the greatest result_recorded_at with no filter (getLatest).';
+  'Append-only result versions — many rows per fixture_id are expected (the original plus one per correction). Never UPDATEd after insert. The point-in-time-safe read orders by result_recorded_at DESC, version_seq DESC and takes the first row (see SupabaseMatchResultsRepository.getAsOf); "current" reads (getLatest) use the same ordering with no asOf filter.';
 
-create index match_results_fixture_id_recorded_at_idx on public.match_results (fixture_id, result_recorded_at);
+create index match_results_fixture_id_recorded_at_idx on public.match_results (fixture_id, result_recorded_at, version_seq);
 
 alter table public.match_results enable row level security;

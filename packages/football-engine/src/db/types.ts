@@ -104,6 +104,8 @@ export interface MatchResultRow {
   readonly source: string;
   readonly corrected_at: string | null;
   readonly correction_count: number;
+  /** Auto-incrementing, purely-ordinal tiebreaker for versions sharing the same result_recorded_at — see the match_results migration. Not a timestamp; never used for temporal filtering. */
+  readonly version_seq: number;
   readonly created_at: string;
 }
 

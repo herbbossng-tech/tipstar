@@ -104,10 +104,10 @@ across a second ingestion run" test).
 
 ## Migrations
 
-12 new migrations, `supabase/migrations/20260929130000` through
-`20260929131000` (including `130450`, added in review for the
-point-in-time correctness fixes below), applied after Section 03's
-(unchanged) schema:
+13 new migrations, `supabase/migrations/20260929130000` through
+`20260929131000` (including `130450` and `130460`, added in review for
+the point-in-time correctness and atomicity fixes below), applied after
+Section 03's (unchanged) schema:
 
 | Migration | Adds |
 |---|---|
@@ -116,8 +116,9 @@ point-in-time correctness fixes below), applied after Section 03's
 | `130150_ingestion_runs.sql` | `ingestion_runs` (created here, before the tables that FK to it — see the ordering note below) |
 | `130200_competitions_seasons.sql` | `competitions`, `seasons` |
 | `130300_venues_teams.sql` | `venues`, `teams` |
-| `130400_fixtures.sql` | `fixtures` (`CHECK (home_team_id <> away_team_id)`, separate `scheduled_kickoff_at`/`actual_kickoff_at`), `match_results` — append-only result VERSIONS, no uniqueness constraint on `fixture_id` (`CHECK (home_goals >= 0)`, `CHECK (away_goals >= 0)`, `corrected_at`/`correction_count` per version) |
+| `130400_fixtures.sql` | `fixtures` (`CHECK (home_team_id <> away_team_id)`, separate `scheduled_kickoff_at`/`actual_kickoff_at`), `match_results` — append-only result VERSIONS, no uniqueness constraint on `fixture_id` (`CHECK (home_goals >= 0)`, `CHECK (away_goals >= 0)`, `corrected_at`/`correction_count` per version, `version_seq` identity column for deterministic tiebreaking) |
 | `130450_fixture_status_observations.sql` | `fixture_status_observations` — append-only fixture status history (PR review fix; see "Point-in-time correctness fixes" below) |
+| `130460_fixture_upsert_atomic.sql` | `upsert_fixture_with_status_observation()` — the atomic fixture-upsert RPC (PR review hardening fix; see "Point-in-time correctness fixes" below) |
 | `130500_match_events.sql` | `match_events` — append-only, partial unique index on `(provider, provider_event_id)` where not null |
 | `130600_team_observations.sql` | `team_observations` — flexible JSONB `metrics`, append-only |
 | `130700_odds_observations.sql` | `odds_observations` — `CHECK (odds > 0)`, `temporal_reliability`, append-only |
@@ -138,8 +139,8 @@ non-negotiable rule.
 | Entity | Behavior |
 |---|---|
 | `data_sources`, `competitions`, `seasons`, `teams`, `venues` | Safely upserted by `(provider, providerXId)` — a provider correcting a team's name is expected and applied in place. |
-| `fixtures` | Upserted by `(provider, provider_fixture_id)`; `scheduled_kickoff_at` is the one field set once and never touched again. Status/venue/`actual_kickoff_at` may change — this is the fast "current state" read (`getById`); every change is separately, immutably recorded in `fixture_status_observations` for point-in-time reads (`getByIdAsOf`) — see "Point-in-time correctness fixes" below. |
-| `match_results` | **Append-only VERSIONS**, like `match_events`/`team_observations`/`odds_observations` below — `insert()`, no `update`. The first call for a fixture is the original; every later call is a correction, its own new row with its own `resultRecordedAt` (never inherited from a prior version). `getLatest()` is the "current state" read; `getAsOf()` is the point-in-time-safe read. See "Point-in-time correctness fixes" below. |
+| `fixtures` | Upserted by `(provider, provider_fixture_id)`; `scheduled_kickoff_at` AND identity (`competition_id`/`season_id`/`home_team_id`/`away_team_id`) are set once and never touched again — a repeat sighting reporting a different identity is quarantined by `ingestion.ts`, never applied (see "Fixture identity immutability" below). Status/`provider_status_raw`/`actual_kickoff_at` may change — this is the fast "current state" read (`getById`); every change is written, as ONE atomic operation with the fixture mutation, to `fixture_status_observations` for point-in-time reads (`getByIdAsOf`) — see "Point-in-time correctness fixes" below. |
+| `match_results` | **Append-only VERSIONS**, like `match_events`/`team_observations`/`odds_observations` below — `insert()`, no `update`. The first call for a fixture is the original; every later call is a correction, its own new row with its own `resultRecordedAt` (never inherited from a prior version) and its own `version_seq` (a purely-ordinal tiebreaker for versions sharing the same `resultRecordedAt`). `getLatest()` is the "current state" read; `getAsOf()` is the point-in-time-safe read. See "Point-in-time correctness fixes" below. |
 | `match_events`, `team_observations`, `odds_observations` | **Append-only.** No `update` method exists on any of their repositories. A correction is a new observation with a later `observedAt`, never a mutation. Multiple odds observations for the same fixture/market/selection are all preserved — never just the latest (`tests/database/40_football_rls_cases.sql`'s FB TEST 14, and `repositories.test.ts`). |
 
 Idempotency throughout is keyed on `(provider, providerXId)`, never an
@@ -191,6 +192,73 @@ Neither fix touches Section 05 or later scope, weakens RLS, or changes
 the service-role boundary — `fixture_status_observations` follows the
 exact same RLS shape as every other content table (`SELECT` for
 `authenticated`, no mutation grant, `ALL` for `service_role`).
+
+## Hardening pass: atomicity, deterministic ordering, identity immutability (PR review)
+
+A further review round found three hardening gaps left after the two
+fixes above and required them closed before approval — none of them
+change the shape of either fix, they make each one's guarantee airtight.
+
+**Atomic Fixture Upsert.** `SupabaseFixturesRepository.upsert()`
+originally performed the fixtures upsert and the
+`fixture_status_observations` insert as two separate round-trips: if
+the first committed and the second failed, the mutable "current state"
+row would change with no corresponding history entry — a narrower
+reintroduction of the Mutable Fixture Status Leakage bug. Fixed with
+`public.upsert_fixture_with_status_observation()` (see
+`20260929130460_fixture_upsert_atomic.sql`), a single PL/pgSQL function
+that performs both writes inside one transaction: any failure —
+including a failed observation insert — rolls back the fixtures write
+too, never leaving one committed without the other. It is deliberately
+SECURITY INVOKER (not DEFINER), for the identical reason documented for
+`public.claim_owner_bootstrap` in Section 03's owner-bootstrap fix:
+only `service_role` may call it (EXECUTE revoked from PUBLIC), and
+`service_role` already has `bypassrls` and a blanket `grant all`, so no
+privilege elevation is needed — and staying invoker keeps `current_user`
+intact for any future RLS-role-checking trigger. The in-memory
+repository models the same guarantee: `InMemoryFixturesRepository`
+takes an optional `onStatusObservation` hook tests can make throw, and
+the fixture-map mutation is applied only after that hook succeeds, so a
+thrown error leaves the map exactly as it was before the call.
+
+**Deterministic Match-Result Version Ordering.** `getAsOf()`/
+`getLatest()` originally ordered only by `result_recorded_at DESC LIMIT
+1` — if two versions shared the exact same timestamp (a provider
+re-reporting at the same nominal instant), which one Postgres returned
+was unspecified. Fixed by adding `version_seq`, a plain
+`generated always as identity` column with no temporal meaning of its
+own, as a secondary sort key (`ORDER BY result_recorded_at DESC,
+version_seq DESC`): ties now always resolve to the most recently
+inserted version, deterministically and repeatably. `result_recorded_at`
+remains the sole temporal "known-at" field — `version_seq` never
+replaces it, and is never conflated with `created_at` (a plain
+timestamp column, which can *also* tie and so is not itself a reliable
+total order). The in-memory repository was already deterministic by
+construction (JS array insertion order + `>=` comparison in
+`latestByTimestamp`), documented in place; `version_seq` gives the
+Postgres implementation the same guarantee without relying on physical
+row order, which Postgres makes no promises about.
+
+**Fixture identity immutability.** `competition_id`/`season_id`/
+`home_team_id`/`away_team_id` are a fixture's IDENTITY, not its
+"current state" — unlike `status`, a legitimate provider correction
+never changes which two teams (or competition) a fixture is between.
+Decided: these fields are immutable once set, exactly like
+`scheduled_kickoff_at`. Enforced at two layers: `FixturesRepository`
+(both implementations) never rewrites them on a repeat upsert —
+`upsert_fixture_with_status_observation()`'s `on conflict ... do update
+set` clause deliberately omits them — and `ingestion.ts` additionally
+*quarantines* (never silently discards) any raw record whose resolved
+identity disagrees with the fixture already on file, the same way an
+unknown competition/team reference already is. This is belt-and-braces
+by design: the repository layer makes a silent rewrite structurally
+impossible even if some future caller bypasses ingestion's check, and
+the ingestion-level quarantine makes the disagreement visible and
+auditable rather than a silently-dropped anomaly.
+
+All three are additionally covered against the real Postgres schema —
+not only the in-memory double — in `tests/database/40_football_rls_cases.sql`
+FB TESTs 22–27.
 
 ## Ingestion pipeline
 

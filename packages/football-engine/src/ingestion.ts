@@ -233,6 +233,31 @@ export async function ingestFixtures(
     }
 
     const existing = await deps.fixtures.getByProviderIdentity(dataProvider.provider, normalized.value.providerFixtureId);
+
+    // Fixture identity immutability (PR review fix — item 3): competition/
+    // season/home team/away team are the fixture's identity, not its
+    // "current state" — a repeat sighting reporting a DIFFERENT identity
+    // than what's already on file is not a legitimate update (unlike
+    // status, which is expected to change over a fixture's lifecycle). The
+    // repository layer already refuses to rewrite these fields on a
+    // repeat upsert (see repositories/fixtures.ts), but that alone would
+    // silently ignore the disagreement; quarantining it here instead
+    // surfaces the anomaly the same way an unknown competition/team
+    // reference already is, rather than leaving a silent contradiction
+    // between what the provider just reported and what's stored.
+    if (existing && (existing.competitionId !== competition.id || existing.seasonId !== seasonId || existing.homeTeamId !== homeTeam.id || existing.awayTeamId !== awayTeam.id)) {
+      await deps.quarantine.quarantine({
+        provider: dataProvider.provider,
+        providerRecordId: normalized.value.providerFixtureId,
+        entityType: "fixture",
+        reason: "Fixture identity (competition/season/home team/away team) is immutable once set; this sighting reports a different identity than the fixture already on file.",
+        rawPayload: raw,
+        ingestionRunId: run.id,
+      });
+      rejected++;
+      continue;
+    }
+
     await deps.fixtures.upsert({
       competitionId: competition.id,
       seasonId,
