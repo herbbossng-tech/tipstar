@@ -56,7 +56,16 @@ packages/
 │                         IntegrationError, DependencyUnavailableError,
 │                         NotImplementedError, InternalError), structured logger + redaction
 ├── config/                Environment schema & typed config loader (zod); fails safe in production
-├── agent-core/            Agent contract, BaseAgent lifecycle state machine, AgentService registry
+├── agent-core/            Agent contract, BaseAgent lifecycle state machine (+ per-invocation
+│                          state machine, side-effect levels, typed failures, command/event
+│                          messages, AgentOrchestrator, idempotency — Section 06), AgentService
+│                          registry
+├── agents/                The ten specialized agent implementations (Football Intelligence/
+│                          Decision/Automation/Settlement/Weekly-Report, Telegram Channel
+│                          Management, Aviator Intelligence/Risk/Automation, Performance) and
+│                          their Supabase-backed persistence — real, Section 06. Each delegates
+│                          its actual computation to an already-real Section 01–05 service; see
+│                          docs/architecture/AGENT_CONTRACTS.md
 ├── telegram/              initData validation (real HMAC), webhook secret verification,
 │                          destination validation, Publishing Policy Engine (real), Bot API
 │                          client (real), Destination Manager / PublishingService (NotImplemented),
@@ -78,17 +87,23 @@ packages/
 │                          (Random Forest/Gradient Boosted Trees/Neural Network), ensemble,
 │                          calibration, probability consistency, evaluation framework, and the
 │                          prediction output contract are real (Section 05 — see
-│                          docs/architecture/FOOTBALL_INTELLIGENCE.md). decision.ts/service.ts
-│                          (Sport Agent decision/ticket logic) remain interface-only (Section 07)
+│                          docs/architecture/FOOTBALL_INTELLIGENCE.md). decision.ts's
+│                          DecisionEngine (Sport Agent Value Engine logic) remains
+│                          interface-only (Section 07) — NotImplementedDecisionEngine is the
+│                          typed NOT_AVAILABLE stub the Football Decision Agent depends on
+│                          (Section 06)
 ├── aviator-engine/        ingestion, feature-engine, statistical-engine, ml-models, ensemble,
-│                          confidence, signal-engine, risk, double-bet, performance-tracking —
-│                          all interface-only, no computation
+│                          confidence, risk, performance-tracking — all interface-only, no
+│                          computation. signal-engine.ts's AviatorSignalState
+│                          (BUY/SELL/WAIT/NO_TRADE/MONITOR) and double-bet.ts's DoubleBetRecord/
+│                          buildDefaultDoubleBetLegs/settleDoubleBetLeg (the locked, real
+│                          50/50-by-default Double Bet model) are real as of Section 06
 └── settlement-engine/     Ticket/TicketSelection/MatchResult/Settlement types, the
                            accumulator-is-one-ticket rule (real, tested), TicketService/
                            SettlementService (NotImplemented)
 ```
 
-## Why two packages beyond the eight the blueprint named
+## Why three packages beyond the eight the blueprint named
 
 The Master Blueprint's repository structure explicitly names 8 packages
 (`football-engine`, `aviator-engine`, `risk-engine`, `market-engine`,
@@ -98,8 +113,10 @@ cutting configuration and the platform-level concerns named under the
 product definition's PLATFORM bucket (License & Access, Global Execution
 Gate, Audit/Observability, Scheduling) — don't have a natural home in any
 of the 8 without either overloading `shared` (violating "small cohesive
-modules") or scattering config/audit/health across every consumer. Two
-additional packages were added:
+modules") or scattering config/audit/health across every consumer. A
+third addition, `packages/agents`, followed the same reasoning once
+Section 06 needed a home for the actual specialized agent
+implementations. Three additional packages were added:
 
 - **`packages/config`** — the "centralized configuration module with
   validation" the blueprint explicitly asks for, used by every app and
@@ -108,6 +125,17 @@ additional packages were added:
   Audit, Health, Reporting, Scheduling. Telegram Destination Manager and
   the Publishing Policy Engine (also PLATFORM-bucket items) live in
   `packages/telegram` instead, since they're Telegram-specific.
+- **`packages/agents`** (Section 06) — the ten specialized agent
+  implementations (`FootballIntelligenceAgent`, `AviatorAutomationAgent`,
+  ...) and their Supabase-backed persistence
+  (`SupabaseInvocationsRepository`/`SupabaseIdempotencyStore`/
+  `SupabaseAgentMessagesRepository`). `packages/agent-core` stays the
+  framework (contract, lifecycle, orchestrator, messages, failures) and
+  deliberately has no dependency on `platform`/`football-engine`/
+  `telegram`/etc. (avoiding a circular dependency, since `platform`
+  already depends on `agent-core`); `packages/agents` is the one place
+  downstream of all of them where the actual agent classes live. See
+  `docs/agents/AGENT_CORE.md` and `docs/architecture/AGENT_CONTRACTS.md`.
 
 This is a physical-arrangement decision, not an architectural one — no
 logical boundary the blueprint described was dropped, renamed, or merged

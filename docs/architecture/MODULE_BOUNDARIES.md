@@ -32,8 +32,26 @@ only" means an interface exists with no default implementation at all
 ## Agent Core
 
 See [`../agents/AGENT_CORE.md`](../agents/AGENT_CORE.md) for the Agent
-contract, lifecycle, and how every named agent in the product definition
-maps to `AgentType`.
+contract, lifecycle, per-invocation state machine, command/event
+messages, `AgentOrchestrator`, idempotency, and how every named agent in
+the product definition maps to `AgentType`.
+
+## Agent Framework (Section 06)
+
+All ten specialized agents (every `AgentType` except
+`global_daily_risk_controller`, deliberately never wrapped as a peer
+agent) are real, tested `BaseAgent` implementations in
+`@sport-os/agents` — each delegates its actual computation to an
+already-real Section 01–05 service/engine or a typed boundary whose only
+implementation explicitly says "not implemented" (`DecisionEngine`/
+`ExecutionIntegration`/`SettlementService`), never inventing Section
+07+ business logic itself. See
+[`AGENT_CONTRACTS.md`](./AGENT_CONTRACTS.md) for every agent's
+capabilities/dependencies/side-effect level, and
+[`AGENT_SECURITY.md`](./AGENT_SECURITY.md) for the authorization/
+execution-boundary rules. `agent_invocations`/`agent_messages`/
+`agent_idempotency_claims` (real Supabase tables, RLS-protected,
+admin-only or service-role-only) are the durable persistence.
 
 ## Global Execution Gate
 
@@ -181,19 +199,27 @@ the other automatically.
 
 ## What's explicitly deferred to later sections
 
-- Sport Agent decision logic, ticket generation, value-selection
-  policy, publishing policy, bookmaker execution, SportyBet automation
-  (football-engine — deferred to Section 07; the full intelligence
-  layer feeding it is now real, see "Football Intelligence Boundary"
-  above). All model/statistical/ML computation for Aviator
-  (aviator-engine — no section assigned yet).
+- Value-selection policy math itself (`DecisionEngine.assess()`'s real
+  implementation — the Football Decision Agent, Section 06, calls it but
+  doesn't implement it), stake sizing, final risk authorization beyond
+  consulting the shared `GlobalDailyRiskController`/`GlobalExecutionGate`,
+  bookmaker execution, SportyBet automation — deferred to Section 07; the
+  full intelligence layer feeding it (Section 05) and the agent
+  orchestration layer requesting it (Section 06) are now real, see
+  "Football Intelligence Boundary" and "Agent Framework (Section 06)"
+  above. All model/statistical/ML computation for Aviator (aviator-engine
+  — no section assigned yet).
 - Real provider integrations (football data, odds — the adapter contract
   and pipeline are real as of Section 04, but no live credential exists;
   see `FOOTBALL_DATA_ARCHITECTURE.md`; Aviator data — untouched).
 - Persistence for Telegram destinations, Ticket publication, Settlement,
   Reporting — Identity and License persistence landed in Section 03;
   these remain open.
-- Real execution (any agent actually placing/confirming a wager).
+- Real execution (any agent actually placing/confirming a wager) — the
+  typed `ExecutionIntegration` boundary (`@sport-os/agents`, Section 06)
+  both automation agents call has exactly one implementation,
+  `NotImplementedExecutionIntegration`, which always reports itself
+  unavailable; a real bookmaker integration is still Section 07+.
 - A concrete `JobScheduler` implementation (contract only today).
 - `GlobalExecutionGate` wired to real identity/license/entitlement
   checks (the real services now exist — Section 03 — but connecting the

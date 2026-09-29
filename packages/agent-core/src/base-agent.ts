@@ -70,6 +70,19 @@ export abstract class BaseAgent<TInput = unknown, TOutput = unknown> implements 
     return { status: this.currentStatus, lastCheckedAt: this.lastCheckedAt };
   }
 
+  /**
+   * Convenience for the extremely common "construct, then make usable"
+   * path (`DISABLED -> INITIALIZING -> READY`) every concrete agent in
+   * `@sport-os/agents` needs at startup — additive to Section 01;
+   * `transitionTo` itself remains available directly for any caller that
+   * needs a different lifecycle path (e.g. pausing, or deliberately
+   * exercising ERROR in a test).
+   */
+  markReady(): void {
+    this.transitionTo(AgentStatus.INITIALIZING);
+    this.transitionTo(AgentStatus.READY);
+  }
+
   protected buildAuditContext(requestId: string, actor: string, correlationId?: string): AgentAuditContext {
     return { requestId, actor, ...(correlationId !== undefined ? { correlationId } : {}) };
   }

@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# RLS test runner (Section 03 users/licenses; Section 04 football data).
+# RLS test runner (Section 03 users/licenses; Section 04 football data;
+# Section 05 intelligence metadata; Section 06 agent framework).
 # Applies every migration in supabase/migrations/, the local-only
-# Supabase role/auth.uid() stubs, fixture data, and both RLS test suites
-# against a scratch Postgres database — then prints the full transcript
-# for manual verification against each test's stated expected outcome
-# (see 20_rls_cases.sql and 40_football_rls_cases.sql).
+# Supabase role/auth.uid() stubs, fixture data, and all four RLS test
+# suites against a scratch Postgres database — then prints the full
+# transcript for manual verification against each test's stated expected
+# outcome (see 20_rls_cases.sql, 40_football_rls_cases.sql,
+# 60_intelligence_rls_cases.sql, 80_agent_rls_cases.sql).
 #
 # Requires: a running local PostgreSQL server reachable as the `postgres`
 # superuser (no Supabase CLI/Docker/PostgREST required — this validates
@@ -40,6 +42,9 @@ sudo -u postgres psql -q -d "$DB_NAME" -v ON_ERROR_STOP=1 -f "$TEST_DIR/30_footb
 echo "== Loading fixtures (intelligence metadata) =="
 sudo -u postgres psql -q -d "$DB_NAME" -v ON_ERROR_STOP=1 -f "$TEST_DIR/50_intelligence_fixtures.sql"
 
+echo "== Loading fixtures (agent framework) =="
+sudo -u postgres psql -q -d "$DB_NAME" -v ON_ERROR_STOP=1 -f "$TEST_DIR/70_agent_fixtures.sql"
+
 echo "== Running RLS test suite: users/licenses (read the transcript below against each test's stated expectation) =="
 sudo -u postgres psql -d "$DB_NAME" -f "$TEST_DIR/20_rls_cases.sql"
 
@@ -48,3 +53,6 @@ sudo -u postgres psql -d "$DB_NAME" -f "$TEST_DIR/40_football_rls_cases.sql"
 
 echo "== Running RLS test suite: intelligence metadata (read the transcript below against each test's stated expectation) =="
 sudo -u postgres psql -d "$DB_NAME" -f "$TEST_DIR/60_intelligence_rls_cases.sql"
+
+echo "== Running RLS test suite: agent framework (read the transcript below against each test's stated expectation) =="
+sudo -u postgres psql -d "$DB_NAME" -f "$TEST_DIR/80_agent_rls_cases.sql"
