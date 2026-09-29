@@ -17,7 +17,9 @@ rigorously via raw SQL without the HTTP layer as a confound.
   against a plain, locally-installed Postgres instance.
 - `10_fixtures.sql` — test users (owners, admins, plain users, a
   suspended user), licenses (active, expired), entitlements, limits, and
-  an audit log row.
+  an audit log row. Also `77777777-7777-7777-7777-777777777777`, a user
+  reserved EXCLUSIVELY for `20_rls_cases.sql`'s TEST 23d — see that
+  file's comment above TEST 23 and "A fixture-isolation pitfall" below.
 - `20_rls_cases.sql` — the test suite itself: every one of the Section 03
   spec's 22 required RLS test cases (plus role-bounded positive cases and
   a few DB-integrity bonus checks), each run in its own
@@ -80,3 +82,41 @@ deliberately not RLS tests — they're pure application logic
 (`isLicenseActive()`/`hasEntitlement()` in `@sport-os/platform`), covered
 instead by that package's own Vitest unit tests, consistent with the
 spec's own split between "RLS TESTING" and "LICENSE TESTS".
+
+## A fixture-isolation pitfall (and the fix)
+
+`run.sh` applies both fixture sets and both test suites to ONE scratch
+database in ONE continuous session — nearly every test wraps its
+mutation in `BEGIN ... ROLLBACK`, so in practice each test runs against
+the same starting state regardless of file order. `20_rls_cases.sql`'s
+TEST 23d is the one deliberate exception: it `COMMIT`s for real, because
+proving the one-time owner-bootstrap claim is durable *across separate
+transactions* requires an actual commit, not a rollback (TEST 23e's
+"a later attempt fails" check depends on TEST 23d's promotion having
+genuinely stuck).
+
+This was found to matter: TEST 23d originally targeted Alice
+(`11111111-1111-1111-1111-111111111111`), permanently promoting her to
+`'owner'` for the rest of that `run.sh` invocation. `40_football_rls_cases.sql`
+runs afterward against the SAME database, and its FB TEST 7
+("authenticated non-admin cannot read `ingestion_runs`") also uses
+Alice — expecting her to still be a plain `'user'`. She wasn't, so
+`is_admin()` correctly returned `true` and the test observed 1 row
+instead of the expected 0.
+
+Investigating this confirmed `public.is_admin()`, the
+`request.jwt.claims`/`auth.uid()` handling in `00_supabase_stubs.sql`,
+and the `ingestion_runs_select_admin_only` RLS policy were all working
+exactly as intended — Alice genuinely *was* an owner by the time FB TEST
+7 ran; the policy correctly reported that. The bug was fixture
+isolation, not RLS: a test that must commit for real was reusing a
+fixture user that other tests, in another file entirely, assumed would
+keep its original role for the whole run.
+
+**Fix:** TEST 23d now targets `77777777-7777-7777-7777-777777777777`, a
+user added to `10_fixtures.sql` and reserved exclusively for this
+purpose — no other test may target it or assume its role. If you add a
+new test that needs a real `COMMIT` (not a `ROLLBACK`), give it its own
+dedicated fixture row the same way, rather than reusing one of the
+shared "plain user"/"admin"/"owner" fixtures every rollback-based test
+relies on keeping its seeded role for the whole `run.sh` invocation.
