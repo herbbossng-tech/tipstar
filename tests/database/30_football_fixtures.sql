@@ -16,6 +16,12 @@ insert into public.teams (id, provider, provider_team_id, name, short_name, coun
 insert into public.fixtures (id, competition_id, season_id, home_team_id, away_team_id, scheduled_kickoff_at, status, provider, provider_fixture_id) values
   ('f1000000-0000-0000-0000-000000000001', 'c0000000-0000-0000-0000-000000000001', '5e000000-0000-0000-0000-000000000001', '7ea00000-0000-0000-0000-000000000001', '7ea00000-0000-0000-0000-000000000002', '2026-01-10T19:00:00Z', 'scheduled', 'test_fixture_provider', 'FIX-1');
 
+-- Mirrors what FixturesRepository.upsert() records on a fixture's first
+-- sighting — the initial status observation, so a point-in-time query
+-- for FIX-1 before any later transition has something to find.
+insert into public.fixture_status_observations (fixture_id, status, provider_status_raw, observed_at, provider) values
+  ('f1000000-0000-0000-0000-000000000001', 'scheduled', 'NS', '2026-01-01T00:00:00Z', 'test_fixture_provider');
+
 insert into public.ingestion_runs (id, provider, mode, status, started_at, completed_at, records_received, records_inserted) values
   ('9000000a-0000-0000-0000-000000000001', 'test_fixture_provider', 'backfill', 'completed', now(), now(), 1, 1);
 

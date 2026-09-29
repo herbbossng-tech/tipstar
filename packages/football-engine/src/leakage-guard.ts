@@ -69,22 +69,28 @@ function isAtOrBefore(observedAt: ISODateString, snapshotMs: number): boolean {
  * depend on.
  */
 export async function getDataAsOf(deps: LeakageGuardDependencies, fixtureId: UUID, snapshotTime: ISODateString): Promise<Result<FixtureSnapshot, AppError>> {
-  const fixture = await deps.fixtures.getById(fixtureId);
-  if (!fixture) {
-    return err(new ValidationError({ message: "Fixture not found.", code: "FIXTURE_NOT_FOUND" }));
-  }
-
   const snapshotMs = new Date(snapshotTime).getTime();
   if (Number.isNaN(snapshotMs)) {
     return err(new ValidationError({ message: "snapshotTime is not a valid timestamp.", code: "INVALID_SNAPSHOT_TIME" }));
   }
 
-  const rawMatchResult = await deps.matchResults.getByFixtureId(fixtureId);
-  if (rawMatchResult && !isAtOrBefore(rawMatchResult.resultRecordedAt, snapshotMs)) {
-    // Not an error: the result genuinely exists, it is just not yet
-    // available as of this snapshot — correctly excluded, not leaked.
+  // Point-in-time-safe: reconstructs status/providerStatusRaw/
+  // actualKickoffAt from fixture_status_observations as of snapshotTime
+  // — never the fixture's current (possibly future-relative-to-snapshot)
+  // status. See repositories/fixtures.ts's FixturesRepository.getByIdAsOf.
+  const fixture = await deps.fixtures.getByIdAsOf(fixtureId, snapshotTime);
+  if (!fixture) {
+    return err(new ValidationError({ message: "Fixture not found, or not yet known as of the requested snapshot time.", code: "FIXTURE_NOT_FOUND" }));
   }
-  const matchResult = rawMatchResult && isAtOrBefore(rawMatchResult.resultRecordedAt, snapshotMs) ? rawMatchResult : undefined;
+
+  // Point-in-time-safe: resolves to the result VERSION with the greatest
+  // resultRecordedAt <= snapshotTime — never a single mutable row whose
+  // original timestamp survives a later correction. See
+  // MatchResultsRepository.getAsOf.
+  const matchResult = await deps.matchResults.getAsOf(fixtureId, snapshotTime);
+  if (matchResult && !isAtOrBefore(matchResult.resultRecordedAt, snapshotMs)) {
+    return err(new InternalError({ message: "LeakageGuard: a future match result was returned by a point-in-time query.", code: LeakageType.FUTURE_RESULT_LEAKAGE, context: { fixtureId } }));
+  }
 
   const events = await deps.matchEvents.listForFixtureAsOf(fixtureId, snapshotTime);
   for (const event of events) {
@@ -105,15 +111,6 @@ export async function getDataAsOf(deps: LeakageGuardDependencies, fixtureId: UUI
   for (const observation of oddsObservations) {
     if (!isAtOrBefore(observation.observedAt, snapshotMs)) {
       return err(new InternalError({ message: "LeakageGuard: future odds were returned by a point-in-time query.", code: LeakageType.FUTURE_ODDS_LEAKAGE, context: { fixtureId, observationId: observation.id } }));
-    }
-  }
-
-  if (rawMatchResult && matchResult === undefined) {
-    // Defense in depth for the result itself, mirrored from the checks
-    // above — this branch can only be reached if the exclusion logic
-    // above this point is ever changed incorrectly.
-    if (isAtOrBefore(rawMatchResult.resultRecordedAt, snapshotMs)) {
-      return err(new InternalError({ message: "LeakageGuard: internal inconsistency in match result filtering.", code: LeakageType.FUTURE_RESULT_LEAKAGE, context: { fixtureId } }));
     }
   }
 

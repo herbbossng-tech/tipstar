@@ -316,8 +316,8 @@ export async function ingestMatchResults(
       continue;
     }
 
-    const existing = await deps.matchResults.getByFixtureId(fixture.id);
-    await deps.matchResults.upsert({
+    const existing = await deps.matchResults.getLatest(fixture.id);
+    await deps.matchResults.insert({
       fixtureId: fixture.id,
       homeGoals: normalized.value.homeGoals,
       awayGoals: normalized.value.awayGoals,

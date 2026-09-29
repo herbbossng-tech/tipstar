@@ -104,8 +104,10 @@ across a second ingestion run" test).
 
 ## Migrations
 
-11 new migrations, `supabase/migrations/20260929130000` through
-`20260929131000`, applied after Section 03's (unchanged) schema:
+12 new migrations, `supabase/migrations/20260929130000` through
+`20260929131000` (including `130450`, added in review for the
+point-in-time correctness fixes below), applied after Section 03's
+(unchanged) schema:
 
 | Migration | Adds |
 |---|---|
@@ -114,7 +116,8 @@ across a second ingestion run" test).
 | `130150_ingestion_runs.sql` | `ingestion_runs` (created here, before the tables that FK to it — see the ordering note below) |
 | `130200_competitions_seasons.sql` | `competitions`, `seasons` |
 | `130300_venues_teams.sql` | `venues`, `teams` |
-| `130400_fixtures.sql` | `fixtures` (`CHECK (home_team_id <> away_team_id)`, separate `scheduled_kickoff_at`/`actual_kickoff_at`), `match_results` (`UNIQUE(fixture_id)`, `CHECK (home_goals >= 0)`, `CHECK (away_goals >= 0)`, `corrected_at`/`correction_count`) |
+| `130400_fixtures.sql` | `fixtures` (`CHECK (home_team_id <> away_team_id)`, separate `scheduled_kickoff_at`/`actual_kickoff_at`), `match_results` — append-only result VERSIONS, no uniqueness constraint on `fixture_id` (`CHECK (home_goals >= 0)`, `CHECK (away_goals >= 0)`, `corrected_at`/`correction_count` per version) |
+| `130450_fixture_status_observations.sql` | `fixture_status_observations` — append-only fixture status history (PR review fix; see "Point-in-time correctness fixes" below) |
 | `130500_match_events.sql` | `match_events` — append-only, partial unique index on `(provider, provider_event_id)` where not null |
 | `130600_team_observations.sql` | `team_observations` — flexible JSONB `metrics`, append-only |
 | `130700_odds_observations.sql` | `odds_observations` — `CHECK (odds > 0)`, `temporal_reliability`, append-only |
@@ -135,8 +138,8 @@ non-negotiable rule.
 | Entity | Behavior |
 |---|---|
 | `data_sources`, `competitions`, `seasons`, `teams`, `venues` | Safely upserted by `(provider, providerXId)` — a provider correcting a team's name is expected and applied in place. |
-| `fixtures` | Upserted by `(provider, provider_fixture_id)`; `scheduled_kickoff_at` is the one field set once and never touched again. Status/venue/`actual_kickoff_at` may change. |
-| `match_results` | First write creates the row (`result_recorded_at` is set once). A second write for the same fixture is treated as a **correction** — `corrected_at`/`correction_count` bump, the original `result_recorded_at` is preserved. This is a deliberate scope-trim vs. full historical versioning of corrections; see `OPEN_QUESTIONS.md`. |
+| `fixtures` | Upserted by `(provider, provider_fixture_id)`; `scheduled_kickoff_at` is the one field set once and never touched again. Status/venue/`actual_kickoff_at` may change — this is the fast "current state" read (`getById`); every change is separately, immutably recorded in `fixture_status_observations` for point-in-time reads (`getByIdAsOf`) — see "Point-in-time correctness fixes" below. |
+| `match_results` | **Append-only VERSIONS**, like `match_events`/`team_observations`/`odds_observations` below — `insert()`, no `update`. The first call for a fixture is the original; every later call is a correction, its own new row with its own `resultRecordedAt` (never inherited from a prior version). `getLatest()` is the "current state" read; `getAsOf()` is the point-in-time-safe read. See "Point-in-time correctness fixes" below. |
 | `match_events`, `team_observations`, `odds_observations` | **Append-only.** No `update` method exists on any of their repositories. A correction is a new observation with a later `observedAt`, never a mutation. Multiple odds observations for the same fixture/market/selection are all preserved — never just the latest (`tests/database/40_football_rls_cases.sql`'s FB TEST 14, and `repositories.test.ts`). |
 
 Idempotency throughout is keyed on `(provider, providerXId)`, never an
@@ -144,6 +147,50 @@ arbitrary UUID alone — re-ingesting the same raw record (including the
 deliberately duplicated `TFP-FIX-1` record in the test fixture dataset)
 updates the existing row, never creates a second one
 (`ingestion.test.ts`'s "never creates two fixture rows..." test).
+
+## Point-in-time correctness fixes (PR review)
+
+Two point-in-time correctness bugs were found in review and fixed before
+this PR merged — both are now covered by tests at every layer (in-memory
+repository, `LeakageGuard`, and the real Postgres schema in
+`tests/database/40_football_rls_cases.sql`).
+
+**Match Result Correction Leakage.** The original design kept one
+mutable `match_results` row per fixture; a correction UPDATEd it in
+place while *preserving* the original `result_recorded_at`, so a
+historical, point-in-time query using that timestamp would see the
+*corrected* score through the *original* recording time. Fixed by
+making `match_results` append-only VERSIONS (no `unique(fixture_id)`):
+`MatchResultsRepository.insert()` always appends a new row with its own
+`resultRecordedAt`, never mutating or reusing an earlier version's
+timestamp; `getAsOf(fixtureId, asOf)` resolves to the version with the
+greatest `resultRecordedAt <= asOf`, so a correction can only ever
+become visible once ITS OWN timestamp has passed — never earlier, no
+matter when it was actually inserted into the database.
+
+**Mutable Fixture Status Leakage.** `fixtures.status`/
+`provider_status_raw`/`actual_kickoff_at` are mutable "current state"
+columns — correct for "what's happening now," but `LeakageGuard.
+getDataAsOf()` was reading them via `FixturesRepository.getById()`,
+which returns the fixture's CURRENT status regardless of the requested
+`snapshotTime`. A pre-match snapshot could therefore see a status
+(e.g. `finished`) the fixture had not yet reached at that snapshot
+time. Fixed by adding `fixture_status_observations`, an append-only
+history table mirroring `team_observations`/`odds_observations`:
+`FixturesRepository.upsert()` records a new observation whenever
+status/`providerStatusRaw`/`actualKickoffAt` actually changes (never on
+an unchanged re-poll), and the new `getByIdAsOf(id, asOf)` reconstructs
+the fixture with status fields taken from the latest observation known
+`<= asOf` — identity fields (competition/season/teams/
+`scheduledKickoffAt`/provider identity) are immutable and come through
+unchanged. `LeakageGuard.getDataAsOf()` now calls `getByIdAsOf`
+exclusively; `getById`/`getLatest` remain as explicit "current state,
+NOT point-in-time-safe" reads for any other caller.
+
+Neither fix touches Section 05 or later scope, weakens RLS, or changes
+the service-role boundary — `fixture_status_observations` follows the
+exact same RLS shape as every other content table (`SELECT` for
+`authenticated`, no mutation grant, `ALL` for `service_role`).
 
 ## Ingestion pipeline
 
@@ -209,9 +256,11 @@ mistaken for, real historical football data.
 `ingestion-runs.ts`, `quality.ts`, `data-sources.ts`), following the
 same dual-implementation pattern Section 03 established for
 `@sport-os/platform`. `MatchEventsRepository`/`TeamObservationsRepository`/
-`OddsObservationsRepository` each expose a `*AsOf(id, asOf)` method —
-the point-in-time-safe read `LeakageGuard` and, later, Section 05's
-feature engineering build on. See `LEAKAGE_PROTECTION.md`.
+`OddsObservationsRepository`/`MatchResultsRepository`/`FixturesRepository`
+each expose a point-in-time-safe read (`listForFixtureAsOf`/
+`listForTeamAsOf`/`getAsOf`/`getByIdAsOf`, respectively) that
+`LeakageGuard` and, later, Section 05's feature engineering build on.
+See `LEAKAGE_PROTECTION.md` and "Point-in-time correctness fixes" above.
 
 ## Data access boundary
 
@@ -230,7 +279,8 @@ established: `revoke all` baseline, then explicit grants.
 
 - **Content tables** (`competitions`, `seasons`, `venues`, `teams`,
   `fixtures`, `match_results`, `match_events`, `team_observations`,
-  `odds_observations`): `SELECT` granted to `authenticated` via
+  `odds_observations`, `fixture_status_observations`): `SELECT` granted
+  to `authenticated` via
   `using (true)` — safe because these are non-sensitive platform
   reference/historical data, not user data, and no `authenticated`
   grant exists for `INSERT`/`UPDATE`/`DELETE` on any of them (verified:

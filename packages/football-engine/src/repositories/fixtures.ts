@@ -1,14 +1,25 @@
 import { generateId, ValidationError, type UUID } from "@sport-os/shared";
 import type { SupabaseClient } from "@sport-os/platform";
 import type { Fixture, MatchEvent, MatchResult, MatchStatus } from "../canonical.js";
-import type { FixtureRow, MatchEventRow, MatchResultRow } from "../db/types.js";
+import type { FixtureRow, FixtureStatusObservationRow, MatchEventRow, MatchResultRow } from "../db/types.js";
 
 /**
  * Fixture/MatchResult/MatchEvent repositories (Section 04 — Fixture /
- * Match Result / Match Events). Fixture status/venue are safely
- * upsertable (Upsert Rules); scheduledKickoffAt is set once at insert
- * and never overwritten on update — see FixturesRepository.upsert()'s
- * implementations. MatchEvents are append-only.
+ * Match Result / Match Events / Point-In-Time Query Contract fix).
+ *
+ * Fixture identity (competition/season/teams/scheduledKickoffAt/provider
+ * identity) and "current state" (status/venue/providerStatusRaw/
+ * actualKickoffAt) are safely upsertable in place (Upsert Rules) — but
+ * "current state" is exactly that: current, mutable, and NOT safe for a
+ * historical point-in-time read. Every status transition is additionally
+ * recorded as an immutable fixture_status_observations row, so
+ * `getByIdAsOf` can reconstruct what status was actually known as of any
+ * past `asOf` — never the fixture's current (possibly future-relative-
+ * to-asOf) status. Match results are append-only VERSIONS (never
+ * updated in place): a correction is a new row, and `getAsOf` resolves
+ * "what did we know as of T" from that history, never from a single
+ * mutable row whose original timestamp survives a later correction.
+ * MatchEvents are append-only, unchanged.
  */
 
 export interface NewFixtureInput {
@@ -21,13 +32,34 @@ export interface NewFixtureInput {
   readonly providerStatusRaw: string | undefined;
   readonly provider: string;
   readonly providerFixtureId: string;
+  /** When this sighting of the fixture's status was made. Most providers don't timestamp status transitions themselves — this defaults to "now" (real ingestion time) when omitted, which is what ingestion.ts relies on; tests may supply an explicit value to control the point-in-time timeline deterministically. */
+  readonly observedAt?: string;
 }
 
 export interface FixturesRepository {
-  /** Inserts on first sight; on a repeat sighting, only status/providerStatusRaw/actualKickoffAt may change — scheduledKickoffAt is set once and never touched again. */
+  /**
+   * Inserts on first sight; on a repeat sighting, only status/
+   * providerStatusRaw/actualKickoffAt may change — scheduledKickoffAt is
+   * set once and never touched again. Whenever status/providerStatusRaw/
+   * actualKickoffAt actually changed (or this is the first sighting),
+   * also appends an immutable fixture_status_observations row so that
+   * transition remains point-in-time reconstructable — see getByIdAsOf.
+   */
   upsert(input: NewFixtureInput): Promise<Fixture>;
+  /** Current/latest known state — NOT point-in-time-safe (status may be later than a historical asOf). Never use for historical feature construction; use getByIdAsOf. */
   getById(id: UUID): Promise<Fixture | undefined>;
   getByProviderIdentity(provider: string, providerFixtureId: string): Promise<Fixture | undefined>;
+  /**
+   * The point-in-time-safe read (Section 04 fix — Mutable Fixture Status
+   * Leakage). Identity fields (competition/season/teams/
+   * scheduledKickoffAt/provider identity) are immutable and always
+   * current; status/providerStatusRaw/actualKickoffAt are reconstructed
+   * from the latest fixture_status_observations row with `observedAt <=
+   * asOf`. Returns undefined if nothing was knowable about this
+   * fixture's status as of that time yet (including if the fixture
+   * itself doesn't exist) — never a future status.
+   */
+  getByIdAsOf(id: UUID, asOf: string): Promise<Fixture | undefined>;
 }
 
 export interface NewMatchResultInput {
@@ -41,9 +73,12 @@ export interface NewMatchResultInput {
 }
 
 export interface MatchResultsRepository {
-  /** First write creates the row; a second write for the same fixture is treated as a provider correction (corrected_at/correction_count bumped), never silently overwritten. */
-  upsert(input: NewMatchResultInput): Promise<MatchResult>;
-  getByFixtureId(fixtureId: UUID): Promise<MatchResult | undefined>;
+  /** Appends a new, immutable result VERSION — the first call for a fixture is the original; every subsequent call is a provider correction (its own new row, never an overwrite of a prior version). */
+  insert(input: NewMatchResultInput): Promise<MatchResult>;
+  /** Current/latest known version (by resultRecordedAt) — a "now" read, NOT point-in-time-safe. Never use for historical feature construction; use getAsOf. */
+  getLatest(fixtureId: UUID): Promise<MatchResult | undefined>;
+  /** The point-in-time-safe read (Section 04 fix — Match Result Correction Leakage): the version with the greatest resultRecordedAt <= asOf, or undefined if none was known yet as of that time. */
+  getAsOf(fixtureId: UUID, asOf: string): Promise<MatchResult | undefined>;
 }
 
 export interface NewMatchEventInput {
@@ -99,6 +134,28 @@ function matchResultRowToDomain(row: MatchResultRow): MatchResult {
   };
 }
 
+/** The subset of Fixture that a fixture_status_observations row can tell us about — used to overlay onto the immutable identity fields for a point-in-time read. */
+interface FixtureStatusSnapshot {
+  readonly status: MatchStatus;
+  readonly providerStatusRaw: string | undefined;
+  readonly actualKickoffAt: string | undefined;
+  readonly observedAt: string;
+}
+
+function fixtureStatusObservationRowToSnapshot(row: FixtureStatusObservationRow): FixtureStatusSnapshot {
+  return {
+    status: row.status,
+    providerStatusRaw: row.provider_status_raw ?? undefined,
+    actualKickoffAt: row.actual_kickoff_at ?? undefined,
+    observedAt: row.observed_at,
+  };
+}
+
+/** Picks the observation with the greatest observedAt from a non-empty list — the "as of this moment, latest known" resolution rule shared by both the fixture-status and match-result point-in-time reads. */
+function latestByTimestamp<T>(items: readonly T[], getTimestamp: (item: T) => string): T {
+  return items.reduce((latest, item) => (new Date(getTimestamp(item)).getTime() >= new Date(getTimestamp(latest)).getTime() ? item : latest));
+}
+
 function matchEventRowToDomain(row: MatchEventRow): MatchEvent {
   return {
     id: row.id,
@@ -119,6 +176,7 @@ function matchEventRowToDomain(row: MatchEventRow): MatchEvent {
 
 export class InMemoryFixturesRepository implements FixturesRepository {
   private readonly byId = new Map<UUID, Fixture>();
+  private readonly statusObservations: (FixtureStatusSnapshot & { fixtureId: UUID })[] = [];
 
   async upsert(input: NewFixtureInput): Promise<Fixture> {
     if (input.homeTeamId === input.awayTeamId) {
@@ -126,6 +184,7 @@ export class InMemoryFixturesRepository implements FixturesRepository {
     }
     const existing = await this.getByProviderIdentity(input.provider, input.providerFixtureId);
     const now = new Date().toISOString();
+    const observedAt = input.observedAt ?? now;
     const fixture: Fixture = {
       id: existing?.id ?? generateId(),
       competitionId: input.competitionId,
@@ -146,6 +205,22 @@ export class InMemoryFixturesRepository implements FixturesRepository {
       updatedAt: now,
     };
     this.byId.set(fixture.id, fixture);
+
+    // Record an immutable status observation whenever this is the first
+    // sighting, or status/providerStatusRaw/actualKickoffAt actually
+    // changed — never on an unchanged re-poll, to avoid unbounded growth.
+    const statusChanged =
+      !existing || existing.status !== fixture.status || existing.providerStatusRaw !== fixture.providerStatusRaw || existing.actualKickoffAt !== fixture.actualKickoffAt;
+    if (statusChanged) {
+      this.statusObservations.push({
+        fixtureId: fixture.id,
+        status: fixture.status,
+        providerStatusRaw: fixture.providerStatusRaw,
+        actualKickoffAt: fixture.actualKickoffAt,
+        observedAt,
+      });
+    }
+
     return fixture;
   }
 
@@ -159,31 +234,55 @@ export class InMemoryFixturesRepository implements FixturesRepository {
     }
     return undefined;
   }
+
+  async getByIdAsOf(id: UUID, asOf: string): Promise<Fixture | undefined> {
+    const fixture = this.byId.get(id);
+    if (!fixture) return undefined;
+    const asOfMs = new Date(asOf).getTime();
+    const eligible = this.statusObservations.filter((o) => o.fixtureId === id && new Date(o.observedAt).getTime() <= asOfMs);
+    if (eligible.length === 0) return undefined;
+    const latest = latestByTimestamp(eligible, (o) => o.observedAt);
+    return { ...fixture, status: latest.status, providerStatusRaw: latest.providerStatusRaw, actualKickoffAt: latest.actualKickoffAt };
+  }
 }
 
 export class InMemoryMatchResultsRepository implements MatchResultsRepository {
-  private readonly byFixtureId = new Map<UUID, MatchResult>();
+  private readonly versions: MatchResult[] = [];
 
-  async upsert(input: NewMatchResultInput): Promise<MatchResult> {
-    const existing = this.byFixtureId.get(input.fixtureId);
-    const result: MatchResult = {
-      id: existing?.id ?? generateId(),
+  async insert(input: NewMatchResultInput): Promise<MatchResult> {
+    const priorVersions = this.versions.filter((v) => v.fixtureId === input.fixtureId);
+    const isCorrection = priorVersions.length > 0;
+    const version: MatchResult = {
+      id: generateId(),
       fixtureId: input.fixtureId,
       homeGoals: input.homeGoals,
       awayGoals: input.awayGoals,
       halftimeHomeGoals: input.halftimeHomeGoals,
       halftimeAwayGoals: input.halftimeAwayGoals,
-      resultRecordedAt: existing?.resultRecordedAt ?? input.resultRecordedAt,
+      // This version's OWN timestamp — never inherited from a prior
+      // version. This is exactly what a correction previously got
+      // wrong: reusing the original resultRecordedAt let the corrected
+      // score leak through a historical asOf check.
+      resultRecordedAt: input.resultRecordedAt,
       source: input.source,
-      correctedAt: existing ? new Date().toISOString() : undefined,
-      correctionCount: existing ? existing.correctionCount + 1 : 0,
+      correctedAt: isCorrection ? new Date().toISOString() : undefined,
+      correctionCount: priorVersions.length,
     };
-    this.byFixtureId.set(input.fixtureId, result);
-    return result;
+    this.versions.push(version);
+    return version;
   }
 
-  async getByFixtureId(fixtureId: UUID): Promise<MatchResult | undefined> {
-    return this.byFixtureId.get(fixtureId);
+  async getLatest(fixtureId: UUID): Promise<MatchResult | undefined> {
+    const versions = this.versions.filter((v) => v.fixtureId === fixtureId);
+    if (versions.length === 0) return undefined;
+    return latestByTimestamp(versions, (v) => v.resultRecordedAt);
+  }
+
+  async getAsOf(fixtureId: UUID, asOf: string): Promise<MatchResult | undefined> {
+    const asOfMs = new Date(asOf).getTime();
+    const eligible = this.versions.filter((v) => v.fixtureId === fixtureId && new Date(v.resultRecordedAt).getTime() <= asOfMs);
+    if (eligible.length === 0) return undefined;
+    return latestByTimestamp(eligible, (v) => v.resultRecordedAt);
   }
 }
 
@@ -250,7 +349,33 @@ export class SupabaseFixturesRepository implements FixturesRepository {
     if (error || !data) {
       throw new ValidationError({ message: "Failed to upsert fixture.", code: "FIXTURE_UPSERT_FAILED", context: { reason: error?.message } });
     }
-    return fixtureRowToDomain(data as FixtureRow);
+    const fixture = fixtureRowToDomain(data as FixtureRow);
+
+    // Record an immutable status observation whenever this is the first
+    // sighting, or status/providerStatusRaw/actualKickoffAt actually
+    // changed — never on an unchanged re-poll. This is intentionally
+    // AFTER the fixtures upsert above: on a first sighting, fixture.id
+    // does not exist until that upsert returns (fixture_status_observations
+    // has a FK to it). Thrown loudly, never swallowed, on failure — a
+    // silently-lost observation would reintroduce the exact leakage this
+    // table exists to prevent.
+    const statusChanged =
+      !existing || existing.status !== fixture.status || existing.providerStatusRaw !== fixture.providerStatusRaw || existing.actualKickoffAt !== fixture.actualKickoffAt;
+    if (statusChanged) {
+      const { error: statusError } = await this.client.from("fixture_status_observations").insert({
+        fixture_id: fixture.id,
+        status: fixture.status,
+        provider_status_raw: fixture.providerStatusRaw ?? null,
+        actual_kickoff_at: fixture.actualKickoffAt ?? null,
+        observed_at: input.observedAt ?? new Date().toISOString(),
+        provider: input.provider,
+      });
+      if (statusError) {
+        throw new ValidationError({ message: "Failed to record fixture status observation.", code: "FIXTURE_STATUS_OBSERVATION_INSERT_FAILED", context: { reason: statusError.message } });
+      }
+    }
+
+    return fixture;
   }
 
   async getById(id: UUID): Promise<Fixture | undefined> {
@@ -264,36 +389,68 @@ export class SupabaseFixturesRepository implements FixturesRepository {
     if (error || !data) return undefined;
     return fixtureRowToDomain(data as FixtureRow);
   }
+
+  async getByIdAsOf(id: UUID, asOf: string): Promise<Fixture | undefined> {
+    const fixture = await this.getById(id);
+    if (!fixture) return undefined;
+    const { data, error } = await this.client
+      .from("fixture_status_observations")
+      .select("*")
+      .eq("fixture_id", id)
+      .lte("observed_at", asOf)
+      .order("observed_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data) return undefined;
+    const snapshot = fixtureStatusObservationRowToSnapshot(data as FixtureStatusObservationRow);
+    return { ...fixture, status: snapshot.status, providerStatusRaw: snapshot.providerStatusRaw, actualKickoffAt: snapshot.actualKickoffAt };
+  }
 }
 
 export class SupabaseMatchResultsRepository implements MatchResultsRepository {
   constructor(private readonly client: SupabaseClient) {}
 
-  async upsert(input: NewMatchResultInput): Promise<MatchResult> {
-    const existing = await this.getByFixtureId(input.fixtureId);
-    const payload: Record<string, unknown> = {
+  async insert(input: NewMatchResultInput): Promise<MatchResult> {
+    const existing = await this.getLatest(input.fixtureId);
+    const payload = {
       fixture_id: input.fixtureId,
       home_goals: input.homeGoals,
       away_goals: input.awayGoals,
       halftime_home_goals: input.halftimeHomeGoals ?? null,
       halftime_away_goals: input.halftimeAwayGoals ?? null,
+      // This version's OWN timestamp — never inherited from a prior
+      // version (see InMemoryMatchResultsRepository's comment for why
+      // that was the bug).
+      result_recorded_at: input.resultRecordedAt,
       source: input.source,
+      corrected_at: existing ? new Date().toISOString() : null,
+      correction_count: existing ? existing.correctionCount + 1 : 0,
     };
-    if (!existing) {
-      payload.result_recorded_at = input.resultRecordedAt;
-    } else {
-      payload.corrected_at = new Date().toISOString();
-      payload.correction_count = existing.correctionCount + 1;
-    }
-    const { data, error } = await this.client.from("match_results").upsert(payload, { onConflict: "fixture_id" }).select("*").single();
+    // Always an INSERT — never an upsert/onConflict — since match_results
+    // has no uniqueness constraint on fixture_id any more: every call
+    // appends a new, immutable version row.
+    const { data, error } = await this.client.from("match_results").insert(payload).select("*").single();
     if (error || !data) {
-      throw new ValidationError({ message: "Failed to upsert match result.", code: "MATCH_RESULT_UPSERT_FAILED", context: { reason: error?.message } });
+      throw new ValidationError({ message: "Failed to insert match result.", code: "MATCH_RESULT_INSERT_FAILED", context: { reason: error?.message } });
     }
     return matchResultRowToDomain(data as MatchResultRow);
   }
 
-  async getByFixtureId(fixtureId: UUID): Promise<MatchResult | undefined> {
-    const { data, error } = await this.client.from("match_results").select("*").eq("fixture_id", fixtureId).maybeSingle();
+  async getLatest(fixtureId: UUID): Promise<MatchResult | undefined> {
+    const { data, error } = await this.client.from("match_results").select("*").eq("fixture_id", fixtureId).order("result_recorded_at", { ascending: false }).limit(1).maybeSingle();
+    if (error || !data) return undefined;
+    return matchResultRowToDomain(data as MatchResultRow);
+  }
+
+  async getAsOf(fixtureId: UUID, asOf: string): Promise<MatchResult | undefined> {
+    const { data, error } = await this.client
+      .from("match_results")
+      .select("*")
+      .eq("fixture_id", fixtureId)
+      .lte("result_recorded_at", asOf)
+      .order("result_recorded_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
     if (error || !data) return undefined;
     return matchResultRowToDomain(data as MatchResultRow);
   }

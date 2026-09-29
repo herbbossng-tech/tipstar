@@ -32,7 +32,13 @@ rigorously via raw SQL without the HTTP layer as a confound.
   odds), admin-only operational tables (`ingestion_runs`), and DB-level
   integrity constraints (distinct teams, no duplicate provider fixture,
   no negative goals, no non-positive odds, multiple odds observations
-  preserved).
+  preserved). FB TESTs 15–21 (added as a PR review fix) cover
+  `fixture_status_observations` RLS and the two point-in-time correctness
+  fixes at the real schema level: a fixture's status resolves correctly
+  by `asOf` across scheduled/live/finished transitions (never a future
+  status in an earlier snapshot), and `match_results` allows — and
+  correctly resolves by `asOf` — multiple append-only versions per
+  fixture (never a correction leaking through an earlier snapshot).
 - `run.sh` — applies the stubs, every migration in
   `supabase/migrations/`, both fixture sets, and both test suites, in
   order, against a scratch database.

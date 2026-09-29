@@ -44,15 +44,24 @@ create trigger set_fixtures_updated_at
 before update on public.fixtures
 for each row execute function public.set_updated_at();
 
--- One current result row per fixture. A provider correction UPDATEs
--- this row (bumping correction_count/corrected_at) rather than losing
--- the original — full historical versioning of corrections was judged
--- unnecessary complexity for this section; the audit_logs entry
--- recorded alongside every correction (see FOOTBALL_DATA_ARCHITECTURE.md)
--- is the provenance trail.
+-- Append-only result VERSIONS, one row per version, never mutated once
+-- written (no `unique(fixture_id)` — deliberately allows many rows per
+-- fixture). A provider correction INSERTs a new row rather than
+-- UPDATEing the prior one: `result_recorded_at` is that row's own,
+-- immutable "when did we learn this" timestamp, never overwritten or
+-- inherited from an earlier version, which is exactly what makes it
+-- safe to filter on for point-in-time queries (`result_recorded_at <=
+-- asOf`). `corrected_at`/`correction_count` are per-version provenance
+-- (null/0 for the original version; set/incrementing for each
+-- correction after it). This replaces an earlier design that UPDATEd a
+-- single row per fixture while preserving only the original
+-- `result_recorded_at` — that let a correction's new score leak through
+-- the original (pre-correction) timestamp on any historical, point-in-
+-- time query. See LEAKAGE_PROTECTION.md and OPEN_QUESTIONS.md #13
+-- (resolved).
 create table public.match_results (
   id uuid primary key default gen_random_uuid(),
-  fixture_id uuid not null references public.fixtures(id) on delete cascade unique,
+  fixture_id uuid not null references public.fixtures(id) on delete cascade,
   home_goals integer not null check (home_goals >= 0),
   away_goals integer not null check (away_goals >= 0),
   halftime_home_goals integer null check (halftime_home_goals is null or halftime_home_goals >= 0),
@@ -61,12 +70,12 @@ create table public.match_results (
   source text not null,
   corrected_at timestamptz null,
   correction_count integer not null default 0,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  created_at timestamptz not null default now()
 );
 
-alter table public.match_results enable row level security;
+comment on table public.match_results is
+  'Append-only result versions — many rows per fixture_id are expected (the original plus one per correction). Never UPDATEd after insert. The point-in-time-safe read is "the row with the greatest result_recorded_at <= asOf" (see SupabaseMatchResultsRepository.getAsOf); "current" reads use the greatest result_recorded_at with no filter (getLatest).';
 
-create trigger set_match_results_updated_at
-before update on public.match_results
-for each row execute function public.set_updated_at();
+create index match_results_fixture_id_recorded_at_idx on public.match_results (fixture_id, result_recorded_at);
+
+alter table public.match_results enable row level security;

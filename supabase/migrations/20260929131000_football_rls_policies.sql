@@ -14,7 +14,8 @@
 revoke all on
   public.data_sources, public.competitions, public.seasons, public.venues, public.teams,
   public.fixtures, public.match_results, public.match_events, public.team_observations,
-  public.odds_observations, public.ingestion_runs, public.data_quarantine, public.data_conflicts
+  public.odds_observations, public.fixture_status_observations, public.ingestion_runs,
+  public.data_quarantine, public.data_conflicts
   from anon, authenticated;
 
 -- ============================================================
@@ -27,7 +28,7 @@ revoke all on
 -- Function that actually serves this data today.
 -- ============================================================
 
-grant select on public.competitions, public.seasons, public.venues, public.teams, public.fixtures, public.match_results, public.match_events, public.team_observations, public.odds_observations
+grant select on public.competitions, public.seasons, public.venues, public.teams, public.fixtures, public.match_results, public.match_events, public.team_observations, public.odds_observations, public.fixture_status_observations
   to authenticated;
 
 create policy competitions_select_authenticated on public.competitions for select using (true);
@@ -39,6 +40,7 @@ create policy match_results_select_authenticated on public.match_results for sel
 create policy match_events_select_authenticated on public.match_events for select using (true);
 create policy team_observations_select_authenticated on public.team_observations for select using (true);
 create policy odds_observations_select_authenticated on public.odds_observations for select using (true);
+create policy fixture_status_observations_select_authenticated on public.fixture_status_observations for select using (true);
 
 -- ============================================================
 -- Operational/internal tables: admin-only SELECT, never anon/plain-user.
@@ -65,5 +67,6 @@ create policy data_conflicts_select_admin_only on public.data_conflicts for sele
 grant all on
   public.data_sources, public.competitions, public.seasons, public.venues, public.teams,
   public.fixtures, public.match_results, public.match_events, public.team_observations,
-  public.odds_observations, public.ingestion_runs, public.data_quarantine, public.data_conflicts
+  public.odds_observations, public.fixture_status_observations, public.ingestion_runs,
+  public.data_quarantine, public.data_conflicts
   to service_role;

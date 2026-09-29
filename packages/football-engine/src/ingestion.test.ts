@@ -139,7 +139,7 @@ describe("ingestMatchResults / ingestMatchEvents / ingestOddsObservations", () =
     expect(run.status).toBe("completed");
 
     const fixture = await deps.fixtures.getByProviderIdentity(TEST_FIXTURE_PROVIDER_NAME, "TFP-FIX-1");
-    const result = await deps.matchResults.getByFixtureId(fixture!.id);
+    const result = await deps.matchResults.getLatest(fixture!.id);
     expect(result?.homeGoals).toBe(2);
     expect(result?.awayGoals).toBe(1);
   });

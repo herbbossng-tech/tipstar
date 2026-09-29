@@ -92,6 +92,7 @@ export interface FixtureRow {
   readonly updated_at: string;
 }
 
+/** One immutable version row — many rows per fixture_id are expected (see the match_results migration). Never UPDATEd after insert. */
 export interface MatchResultRow {
   readonly id: string;
   readonly fixture_id: string;
@@ -104,7 +105,18 @@ export interface MatchResultRow {
   readonly corrected_at: string | null;
   readonly correction_count: number;
   readonly created_at: string;
-  readonly updated_at: string;
+}
+
+/** Append-only fixture status history — see the fixture_status_observations migration. */
+export interface FixtureStatusObservationRow {
+  readonly id: string;
+  readonly fixture_id: string;
+  readonly status: MatchStatusRow;
+  readonly provider_status_raw: string | null;
+  readonly actual_kickoff_at: string | null;
+  readonly observed_at: string;
+  readonly provider: string;
+  readonly created_at: string;
 }
 
 export interface MatchEventRow {

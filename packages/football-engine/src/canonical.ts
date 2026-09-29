@@ -120,6 +120,7 @@ export interface Fixture {
   /** Set once, never overwritten merely because the match was delayed — see actualKickoffAt. */
   readonly scheduledKickoffAt: ISODateString;
   readonly actualKickoffAt: ISODateString | undefined;
+  /** Current/latest known status — mutable, NOT point-in-time-safe. A historical snapshot must use FixturesRepository.getByIdAsOf instead, which reconstructs this field (and providerStatusRaw/actualKickoffAt) from fixture_status_observations as of the requested time. */
   readonly status: MatchStatus;
   /** Original provider status string, preserved for provenance (e.g. "FT" alongside FINISHED). */
   readonly providerStatusRaw: string | undefined;
@@ -130,6 +131,11 @@ export interface Fixture {
   readonly updatedAt: ISODateString;
 }
 
+/**
+ * One immutable VERSION of a fixture's result — never mutated once
+ * written. A correction is always a new version (its own row, its own
+ * `id`), never an edit to a prior one: see MatchResultsRepository.
+ */
 export interface MatchResult {
   readonly id: UUID;
   readonly fixtureId: UUID;
@@ -137,10 +143,12 @@ export interface MatchResult {
   readonly awayGoals: number;
   readonly halftimeHomeGoals: number | undefined;
   readonly halftimeAwayGoals: number | undefined;
-  /** When this result actually became known — never earlier than the moment it genuinely was. */
+  /** When THIS version became known — immutable once written, never inherited from an earlier or later version. The point-in-time filtering field: a query for asOf=T must use the version with the greatest resultRecordedAt <= T. */
   readonly resultRecordedAt: ISODateString;
   readonly source: string;
+  /** undefined for the original version; set for every version after it. */
   readonly correctedAt: ISODateString | undefined;
+  /** 0 for the original version, incrementing by 1 for each correction after it. */
   readonly correctionCount: number;
 }
 
