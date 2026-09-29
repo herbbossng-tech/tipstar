@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Section 03 RLS test runner. Applies every migration in
-# supabase/migrations/, the local-only Supabase role/auth.uid() stubs,
-# fixture data, and the RLS test suite against a scratch Postgres
-# database — then prints the full transcript for manual verification
-# against each test's stated expected outcome (see 20_rls_cases.sql).
+# RLS test runner (Section 03 users/licenses; Section 04 football data).
+# Applies every migration in supabase/migrations/, the local-only
+# Supabase role/auth.uid() stubs, fixture data, and both RLS test suites
+# against a scratch Postgres database — then prints the full transcript
+# for manual verification against each test's stated expected outcome
+# (see 20_rls_cases.sql and 40_football_rls_cases.sql).
 #
 # Requires: a running local PostgreSQL server reachable as the `postgres`
 # superuser (no Supabase CLI/Docker/PostgREST required — this validates
@@ -30,8 +31,14 @@ for f in "$MIGRATIONS_DIR"/*.sql; do
   sudo -u postgres psql -q -d "$DB_NAME" -v ON_ERROR_STOP=1 -f "$f"
 done
 
-echo "== Loading fixtures =="
+echo "== Loading fixtures (users/licenses) =="
 sudo -u postgres psql -q -d "$DB_NAME" -v ON_ERROR_STOP=1 -f "$TEST_DIR/10_fixtures.sql"
 
-echo "== Running RLS test suite (read the transcript below against each test's stated expectation) =="
+echo "== Loading fixtures (football data) =="
+sudo -u postgres psql -q -d "$DB_NAME" -v ON_ERROR_STOP=1 -f "$TEST_DIR/30_football_fixtures.sql"
+
+echo "== Running RLS test suite: users/licenses (read the transcript below against each test's stated expectation) =="
 sudo -u postgres psql -d "$DB_NAME" -f "$TEST_DIR/20_rls_cases.sql"
+
+echo "== Running RLS test suite: football data (read the transcript below against each test's stated expectation) =="
+sudo -u postgres psql -d "$DB_NAME" -f "$TEST_DIR/40_football_rls_cases.sql"

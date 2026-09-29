@@ -221,6 +221,23 @@ rollback;
 --   before/after semantics serially, which is the strongest check this
 --   harness can express; the row-lock argument above is what extends
 --   that guarantee to true concurrency.
+--
+-- TEST 23d performs a real `commit`, not the `rollback` every other test
+-- in this file uses — it must, to prove the claim is durable across
+-- separate transactions (23e's "later attempt" check depends on 23d's
+-- promotion having actually stuck). That makes it the one test in this
+-- entire suite whose mutation survives for the rest of this shared,
+-- persistent database across every later test in the same `run.sh`
+-- invocation — including 40_football_rls_cases.sql, which runs
+-- afterward against the SAME database. It therefore targets
+-- `77777777-7777-7777-7777-777777777777`, a fixture user reserved
+-- exclusively for this purpose (see 10_fixtures.sql) — it used to
+-- target Alice (11111111), which silently promoted her to 'owner' for
+-- the rest of the run and made 40_football_rls_cases.sql's FB TEST 7
+-- ("authenticated non-admin cannot read ingestion_runs") observe an
+-- owner instead of a plain user and see 1 row instead of the expected
+-- 0. The RLS policy and is_admin() were never the bug; a shared,
+-- real-committing fixture was.
 -- ============================================================
 
 \echo '--- TEST 23a: anon cannot execute claim_owner_bootstrap at all (expect ERROR permission denied) ---'
@@ -250,12 +267,14 @@ rollback;
 \echo '--- TEST 23d: service_role CAN atomically claim + promote in one coherent operation (expect claim_owner_bootstrap = t, then users.role = owner and owner_bootstrapped_at IS NOT NULL) ---'
 begin;
 set local role service_role;
-select public.claim_owner_bootstrap('11111111-1111-1111-1111-111111111111');
+-- Targets the dedicated 77777777... fixture user, not Alice — see the
+-- comment above TEST 23 for why: this commits for real.
+select public.claim_owner_bootstrap('77777777-7777-7777-7777-777777777777');
 commit;
 
 begin;
 set local role service_role;
-select id, role from public.users where id = '11111111-1111-1111-1111-111111111111';
+select id, role from public.users where id = '77777777-7777-7777-7777-777777777777';
 select owner_bootstrapped_at is not null as bootstrapped, owner_bootstrapped_user_id from public.platform_settings;
 rollback;
 

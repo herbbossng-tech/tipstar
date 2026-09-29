@@ -69,9 +69,12 @@ packages/
 │                          (NotImplemented), Scheduling (contract only)
 ├── risk-engine/           GlobalDailyRiskController (real) + sport-agnostic RiskService (NotImplemented)
 ├── market-engine/         Odds/market data boundary (NotImplemented)
-├── football-engine/       ingestion, data-quality, feature-engineering, feature-store, models/
-│                          {elo,form,xg,statistical,ml,monte-carlo}, ensemble, calibration,
-│                          decision — all interface-only, no computation
+├── football-engine/       Data ingestion/normalization/quality/leakage-protection boundary
+│                          (real, Section 04 — canonical model, provider adapters, quality
+│                          engine, point-in-time query contract; see
+│                          docs/architecture/FOOTBALL_DATA_ARCHITECTURE.md). feature-engineering,
+│                          feature-store, models/{elo,form,xg,statistical,ml,monte-carlo},
+│                          ensemble, calibration, decision remain interface-only (Section 05)
 ├── aviator-engine/        ingestion, feature-engine, statistical-engine, ml-models, ensemble,
 │                          confidence, signal-engine, risk, double-bet, performance-tracking —
 │                          all interface-only, no computation
@@ -108,9 +111,11 @@ away; see `MODULE_BOUNDARIES.md` for exactly which service lives where.
 ## Data flow (once later sections implement it)
 
 ```
-RAW DATA (provider ingestion)
+RAW DATA (provider ingestion)          — real, Section 04 (no live provider connected)
    ↓
-DATA QUALITY
+DATA QUALITY                           — real, Section 04 (see DATA_QUALITY.md)
+   ↓
+TIME-AWARE DATA STORE / LEAKAGE GUARD  — real, Section 04 (see LEAKAGE_PROTECTION.md)
    ↓
 FEATURE ENGINEERING (point-in-time-safe — see docs/data/DATA_LEAKAGE_PRINCIPLE.md)
    ↓
@@ -198,7 +203,30 @@ REPORTING / PERFORMANCE (derived only from real settled data)
   `LicenseService` implementations the gate *could* use, but connecting
   them is not this section's job (see `AUTHORIZATION.md`).
 
+## Section 04 boundaries
+
+- `football-engine` now has a real data ingestion/normalization/quality/
+  leakage-protection layer — see `FOOTBALL_DATA_ARCHITECTURE.md`,
+  `DATA_QUALITY.md`, `LEAKAGE_PROTECTION.md`. Still no football
+  prediction model, Sport Agent decision logic, ticket generation,
+  bookmaker execution, SportyBet automation, or Telegram publishing
+  logic beyond what already existed — unchanged from Sections 01–03.
+- No live football/odds provider is connected — see
+  `FOOTBALL_DATA_ARCHITECTURE.md`'s "Providers actually connected". The
+  one adapter this section ships is a clearly-labeled deterministic test
+  fixture provider, never presented as real data.
+- No historical football data was fabricated — every record in the
+  deterministic dataset uses obviously synthetic names/ids
+  (`TFP-*`, "Test Arsenal", "Test Premier League").
+- Mini App still never calls a football data provider directly — no
+  football-facing Mini App endpoint exists yet; the data access boundary
+  is enforced by absence (nothing in `apps/mini-app` imports
+  `@sport-os/football-engine`), the same way it was before this section.
+
 See also:
+- [`FOOTBALL_DATA_ARCHITECTURE.md`](./FOOTBALL_DATA_ARCHITECTURE.md)
+- [`DATA_QUALITY.md`](./DATA_QUALITY.md)
+- [`LEAKAGE_PROTECTION.md`](./LEAKAGE_PROTECTION.md)
 - [`MODULE_BOUNDARIES.md`](./MODULE_BOUNDARIES.md)
 - [`OPEN_QUESTIONS.md`](./OPEN_QUESTIONS.md)
 - [`TELEGRAM_AUTHENTICATION.md`](./TELEGRAM_AUTHENTICATION.md)

@@ -129,3 +129,48 @@ later sections") — the backend authorization foundation
 (`user-admin.ts`, `license.ts`'s admin operations, the authorization
 matrix in `AUTHORIZATION.md`) is real and ready for one, but no UI
 consumes it yet, and no section has been assigned to build it.
+
+## 11. Which real football/odds provider(s) will this codebase actually integrate with?
+
+Section 04 built the full provider-agnostic contract
+(`FootballDataProvider` and its facets, `ProviderConfig`, bounded
+retries) and the config surface to drive it (`FOOTBALL_DATA_PROVIDER`/
+`FOOTBALL_DATA_ENABLED`/`FOOTBALL_DATA_BASE_URL`/etc. — see
+`../environment-variables.md`), but no real provider was selected or
+connected — the section's own rules forbid assuming one without
+verification ("do not invent provider APIs", "do not assume a provider
+supports a field it has not been verified to support"). Picking a real
+provider (and confirming what it actually supports — fixtures only?
+odds? team-level stats? player data?) is a product/ops decision no
+later section has been assigned yet.
+
+## 12. Who ingests team-level performance observations (`team_observations`), and from what?
+
+`TeamObservationsRepository` (Supabase + InMemory) and the
+`team_observations` table are real and RLS-protected, and `LeakageGuard`
+already enforces point-in-time correctness against them (see
+`LEAKAGE_PROTECTION.md`'s regression test, which seeds them directly).
+But `ingestion.ts` has no `ingestTeamObservations()` function, because
+`adapters/test-fixture-provider.ts`'s deterministic dataset doesn't
+include any raw team-observation records to ingest, and no
+`FootballTeamProvider`-facet fetch call exists to source them from
+either. The entity was built because Section 05's feature engineering
+will need it (rolling form, standings, etc.), per the spec's explicit
+list — but wiring an actual ingestion path for it is unaddressed, and
+should happen alongside whichever real provider is picked (question
+#11), since the right raw shape depends entirely on what that provider
+returns.
+
+## 13. Is match-result correction tracking (`corrected_at`/`correction_count`) sufficient, or does it need full historical versioning? — RESOLVED
+
+**Resolved during PR review.** The original scope-trim (a single mutable
+row per fixture, UPDATEd in place on correction while preserving the
+original `result_recorded_at`) turned out to be a real point-in-time
+correctness bug, not just a completeness gap: a historical query using
+the preserved original timestamp could see the corrected score —
+"Match Result Correction Leakage." `match_results` is now append-only
+result VERSIONS (`MatchResultsRepository.insert()`/`getAsOf()`/
+`getLatest()`), giving full historical versioning: "what did we believe
+the score was at time T" is exactly what `getAsOf(fixtureId, T)`
+answers. See `FOOTBALL_DATA_ARCHITECTURE.md`'s "Point-in-time
+correctness fixes" and `LEAKAGE_PROTECTION.md`.
