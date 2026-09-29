@@ -22,7 +22,14 @@ rigorously via raw SQL without the HTTP layer as a confound.
   spec's 22 required RLS test cases (plus role-bounded positive cases and
   a few DB-integrity bonus checks), each run in its own
   `BEGIN ... ROLLBACK` transaction so nothing persists and one test's
-  expected permission error never aborts the rest.
+  expected permission error never aborts the rest. Tests 23a–23e (added
+  as a PR review fix) are the exception: they exercise
+  `claim_owner_bootstrap()`, the atomic one-time OWNER bootstrap claim, so
+  23c–23e deliberately `COMMIT` to verify real before/after state across
+  transactions — see the comment block above TEST 23 for why true
+  concurrent-transaction testing isn't reproducible in this serial psql
+  harness, and how the row-locking argument extends the serial checks
+  into a structural concurrency guarantee.
 - `30_football_fixtures.sql` — Section 04 test data: a competition,
   season, two teams, a scheduled fixture, an ingestion run, and one odds
   observation — clearly synthetic (`test_fixture_provider`), never mixed

@@ -93,18 +93,33 @@ Deno.serve(async (req: Request) => {
     return errorResponse("SESSION_REVOKED", "Session has been revoked.", 401);
   }
 
-  const { data: settingsRow } = await supabase.from("platform_settings").select("owner_bootstrapped_at").eq("id", true).maybeSingle();
-  if ((settingsRow as { owner_bootstrapped_at: string | null } | null)?.owner_bootstrapped_at) {
+  // Atomic, database-enforced one-time claim + OWNER promotion — a single
+  // RPC call into public.claim_owner_bootstrap(), never a prior SELECT
+  // followed by separate UPDATEs. That SQL function performs the
+  // platform_settings claim and the users.role promotion inside one
+  // Postgres transaction: Postgres's row-level lock on the conditional
+  // UPDATE means at most one concurrent caller can ever have `claimed ===
+  // true`, and a promotion failure rolls back the whole transaction
+  // (including the claim), so the two can never diverge. See
+  // supabase/migrations/20260928121000_owner_bootstrap_atomic_claim.sql.
+  const { data: claimed, error: claimError } = await supabase.rpc("claim_owner_bootstrap", { p_user_id: session.user_id });
+  if (claimError) {
+    // The authoritative state transition itself did not commit — never
+    // report success here, whatever the underlying cause.
+    return errorResponse("OWNER_BOOTSTRAP_FAILED", "Could not complete owner bootstrap.", 500);
+  }
+  if (claimed !== true) {
     return errorResponse("OWNER_BOOTSTRAP_ALREADY_DONE", "Owner bootstrap has already run.", 409);
   }
 
-  const { data: updatedUser, error: updateError } = await supabase.from("users").update({ role: "owner" }).eq("id", session.user_id).select("id, telegram_user_id, role").single();
-  if (updateError || !updatedUser) {
-    return errorResponse("OWNER_BOOTSTRAP_FAILED", "Could not complete owner bootstrap.", 500);
-  }
-
-  await supabase.from("platform_settings").update({ owner_bootstrapped_at: new Date().toISOString(), owner_bootstrapped_user_id: session.user_id }).eq("id", true);
-  await supabase.from("audit_logs").insert({
+  // Best-effort only, from here on: the one-time bootstrap state
+  // transition has already been committed by the RPC above, so an audit
+  // write failure must never change (or roll back) the success response.
+  // supabase-js resolves with { error } on a DB-level failure (RLS,
+  // constraint, etc.) rather than throwing — a bare try/catch around
+  // .insert() would never actually observe that failure, so the returned
+  // error is checked explicitly here instead.
+  const { error: auditError } = await supabase.from("audit_logs").insert({
     actor_user_id: session.user_id,
     action: "owner_bootstrapped",
     resource_type: "user",
@@ -112,6 +127,9 @@ Deno.serve(async (req: Request) => {
     outcome: "success",
     metadata: {},
   });
+  if (auditError) {
+    console.error("owner-bootstrap: best-effort audit write failed", auditError.message);
+  }
 
   return jsonResponse({ identity: { role: "owner" } }, 200);
 });

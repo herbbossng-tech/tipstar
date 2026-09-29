@@ -198,3 +198,74 @@ set local request.jwt.claims = '{"sub":"11111111-1111-1111-1111-111111111111"}';
 update public.users set first_name = 'Alicia' where id = '11111111-1111-1111-1111-111111111111';
 select first_name, updated_at > '2020-01-01'::timestamptz as updated_at_is_recent from public.users where id = '11111111-1111-1111-1111-111111111111';
 rollback;
+
+-- ============================================================
+-- TEST 23: claim_owner_bootstrap() atomicity regression (fix for the
+-- owner-bootstrap race condition identified in PR review). Concurrent
+-- transactions cannot be reproduced in this serial psql harness, so the
+-- concurrency invariant is stated here explicitly and verified
+-- structurally instead:
+--
+--   claim_owner_bootstrap() performs its one-time claim as a single
+--   `UPDATE ... WHERE id = true and owner_bootstrapped_at is null`. That
+--   statement takes Postgres's row-level lock on the platform_settings
+--   singleton row the instant it runs; a second concurrent transaction
+--   attempting the same UPDATE BLOCKS on that lock (it cannot even
+--   evaluate its WHERE clause) until the first transaction commits or
+--   rolls back, at which point it re-reads the now-committed row and its
+--   WHERE clause fails to match (owner_bootstrapped_at is no longer
+--   null) — so `FOUND` is false and it deterministically returns false.
+--   This is a structural, not probabilistic, guarantee: Postgres's MVCC
+--   + row locking makes a "double claim" impossible by construction,
+--   independent of timing. Tests 23d/23e below verify the same
+--   before/after semantics serially, which is the strongest check this
+--   harness can express; the row-lock argument above is what extends
+--   that guarantee to true concurrency.
+-- ============================================================
+
+\echo '--- TEST 23a: anon cannot execute claim_owner_bootstrap at all (expect ERROR permission denied) ---'
+begin;
+set local role anon;
+select public.claim_owner_bootstrap('11111111-1111-1111-1111-111111111111');
+rollback;
+
+\echo '--- TEST 23b: authenticated (even as the owner-fixture user) cannot execute claim_owner_bootstrap (expect ERROR permission denied) ---'
+begin;
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"33333333-3333-3333-3333-333333333333"}';
+select public.claim_owner_bootstrap('11111111-1111-1111-1111-111111111111');
+rollback;
+
+\echo '--- TEST 23c: a promotion failure (bogus target user id) aborts the WHOLE transaction, including the platform_settings claim — never a state where the slot is consumed but nobody is promoted (expect ERROR, then owner_bootstrapped_at still null) ---'
+begin;
+set local role service_role;
+select public.claim_owner_bootstrap('99999999-9999-9999-9999-999999999999');
+commit;
+
+begin;
+set local role service_role;
+select owner_bootstrapped_at, owner_bootstrapped_user_id from public.platform_settings;
+rollback;
+
+\echo '--- TEST 23d: service_role CAN atomically claim + promote in one coherent operation (expect claim_owner_bootstrap = t, then users.role = owner and owner_bootstrapped_at IS NOT NULL) ---'
+begin;
+set local role service_role;
+select public.claim_owner_bootstrap('11111111-1111-1111-1111-111111111111');
+commit;
+
+begin;
+set local role service_role;
+select id, role from public.users where id = '11111111-1111-1111-1111-111111111111';
+select owner_bootstrapped_at is not null as bootstrapped, owner_bootstrapped_user_id from public.platform_settings;
+rollback;
+
+\echo '--- TEST 23e: ONE-TIME INVARIANT — once claimed, a second attempt (even targeting a different user) deterministically fails and that user is NOT promoted (expect claim_owner_bootstrap = f, then role still "user") ---'
+begin;
+set local role service_role;
+select public.claim_owner_bootstrap('22222222-2222-2222-2222-222222222222');
+commit;
+
+begin;
+set local role service_role;
+select id, role from public.users where id = '22222222-2222-2222-2222-222222222222';
+rollback;

@@ -29,11 +29,33 @@
 -- evaluate against auth.uid() = NULL for a service-role connection (no
 -- request.jwt.claims is ever set on it) and incorrectly reject every
 -- legitimate service-role role change.
+--
+-- The exemption checks current_user, matching PostgREST/Supabase's
+-- connection model: a single pooled connection authenticates once, then
+-- issues `SET ROLE`/`SET LOCAL ROLE` per request to become anon/
+-- authenticated/service_role (this is exactly what
+-- tests/database/00_supabase_stubs.sql's `set local role ...` recreates,
+-- and why session_user is NOT usable here — it stays the pool's fixed
+-- login role, never any of the three).
+--
+-- This function is deliberately SECURITY INVOKER (not DEFINER), unlike
+-- is_admin()/is_owner() (see auth_helper_functions.sql) which it calls —
+-- those are already SECURITY DEFINER for their own narrow reason (RLS
+-- self-reference on `users`), so this trigger doesn't need to be too,
+-- and being DEFINER here would be actively wrong: entering a SECURITY
+-- DEFINER function always switches current_user to that function's OWNER
+-- for its duration, so a real service_role caller (established via SET
+-- ROLE, exactly as above) would be hidden from the `current_user =
+-- 'service_role'` check below the moment this trigger fired — silently
+-- and incorrectly rejecting every legitimate service-role role/status
+-- change. (This was caught while fixing the owner-bootstrap race: the
+-- new atomic public.claim_owner_bootstrap(), itself correctly SECURITY
+-- INVOKER, would otherwise have its own users.role UPDATE rejected by
+-- this exact trap the instant this trigger fired as DEFINER.)
 
 create or replace function public.enforce_user_self_service_boundaries()
 returns trigger
 language plpgsql
-security definer
 set search_path = public, pg_temp
 as $$
 begin
