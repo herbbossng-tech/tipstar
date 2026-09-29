@@ -173,4 +173,71 @@ result VERSIONS (`MatchResultsRepository.insert()`/`getAsOf()`/
 `getLatest()`), giving full historical versioning: "what did we believe
 the score was at time T" is exactly what `getAsOf(fixtureId, T)`
 answers. See `FOOTBALL_DATA_ARCHITECTURE.md`'s "Point-in-time
-correctness fixes" and `LEAKAGE_PROTECTION.md`.
+correctness fixes" and `LEAKAGE_PROTECTION.md`. Section 05's dataset
+builder still deliberately derives training labels from
+`getLatest()` (the current, possibly-corrected result) rather than
+`getAsOf()` — labels are allowed to see the final outcome, that is what
+makes them labels — but every feature-history read (`features/history.ts`)
+uses the point-in-time-safe resolution the versioned model now makes
+possible.
+
+## 14. xG provider availability
+
+**Current decision:** no xG feature is computed; `xg_expected_goals_home`/
+`xg_expected_goals_away` are declared (`features/unavailable.ts`) but
+always return `MISSING`. **Reason:** no canonical xG field exists
+anywhere in the Section 04 data model, and no provider has been
+verified to supply it (question #11). **Consequence:** every model in
+this section trains and predicts without xG as a signal — its
+predictive contribution, if any, is entirely unmeasured. **Next
+decision point:** once a real provider is selected (question #11),
+confirm whether it actually supplies match-level or shot-level xG
+before building the feature for real — never approximate xG from goals
+or shots as a stand-in.
+
+## 15. Player/injury/lineup provider availability
+
+**Current decision:** no player-level entity (`Player`/`Lineup`/
+`PlayerAvailability`) exists in the canonical model, so no
+availability/injury/suspension feature exists either. **Reason:**
+Section 04 deliberately avoided "premature player-level complexity" with
+no verified provider behind it. **Consequence:** no squad-composition
+signal (key player absence, rotation risk) is available to any model
+this section built — a real, material gap for football prediction
+quality that this section's architecture cannot close on its own.
+**Next decision point:** once a real provider confirmed to supply
+lineup/injury data is selected, this needs its own canonical entities
+(Section 04-style) before Section 05's feature layer can consume them —
+likely a small follow-up data-layer extension, not a Section 05 rework.
+
+## 16. Production model artifact storage strategy
+
+**Current decision:** trained model state (tree structures, network
+weights) is stored as `jsonb` in `intelligence_model_versions.state`.
+**Reason:** at this section's synthetic-data scale, every model's fitted
+state is small enough that JSONB is simple and sufficient — no premature
+infrastructure. **Consequence:** a production-scale retrain (many more/
+deeper trees, a larger network, real historical data volume) could
+produce an artifact too large or unwieldy for a JSONB column to be the
+right long-term store. **Next decision point:** once real training runs
+against real data volume exist, measure actual artifact sizes and decide
+whether to move to blob/file storage (e.g. Supabase Storage) with the
+table holding only a reference, before JSONB row sizes become a genuine
+operational problem.
+
+## 17. Model retraining schedule
+
+**Current decision:** none — nothing in this codebase triggers, schedules,
+or automates a retrain. Every model in this section is trained on demand,
+once, by a caller supplying `TrainingExample[]` directly. **Reason:** out
+of this section's scope, and premature without real production data
+flowing in the first place (question #11). **Consequence:** there is no
+answer yet to "how often should Elo/Random Forest/GBT/Neural Network be
+retrained as new results come in" — a real product/ops decision that
+depends on real data volume and velocity, neither of which exist yet.
+**Next decision point:** once a real provider is connected and genuine
+historical + live data accumulates, decide a retraining cadence (e.g.
+weekly, after each matchday) and whether `@sport-os/platform`'s
+`JobScheduler` contract (still unimplemented — see question in
+`MODULE_BOUNDARIES.md`'s "What's explicitly deferred") is the right
+place to drive it.

@@ -1,4 +1,4 @@
-import { generateId, ValidationError, type UUID } from "@sport-os/shared";
+import { generateId, ValidationError, type ISODateString, type UUID } from "@sport-os/shared";
 import type { SupabaseClient } from "@sport-os/platform";
 import type { Fixture, MatchEvent, MatchResult, MatchStatus } from "../canonical.js";
 import type { FixtureRow, FixtureStatusObservationRow, MatchEventRow, MatchResultRow } from "../db/types.js";
@@ -75,6 +75,30 @@ export interface FixturesRepository {
   getById(id: UUID): Promise<Fixture | undefined>;
   getByProviderIdentity(provider: string, providerFixtureId: string): Promise<Fixture | undefined>;
   /**
+   * Section 05 — feature history building block. Every fixture (any
+   * status) where this team played home or away with
+   * `scheduledKickoffAt < beforeKickoff`, ordered ascending by
+   * `scheduledKickoffAt`. Bounds only by kickoff time — a fixture's
+   * *result* may still not have been known at a given snapshotTime even
+   * though its kickoff was in the past, so callers must independently
+   * check each fixture's MatchResult.resultRecordedAt against their own
+   * snapshotTime (see features/history.ts) before treating it as
+   * available. This method alone is not a leakage guarantee.
+   */
+  listForTeamBeforeKickoff(teamId: UUID, beforeKickoff: ISODateString): Promise<readonly Fixture[]>;
+  /**
+   * Section 05 — global chronological replay building block, needed
+   * specifically for Elo: a team's rating depends transitively on every
+   * opponent it has played, whose own ratings depend on their entire
+   * history in turn, so Elo cannot be computed from one team's fixtures
+   * alone. Every fixture (any two teams) with `scheduledKickoffAt <
+   * beforeKickoff`, ordered ascending. Same caveat as
+   * `listForTeamBeforeKickoff`: bounds only by kickoff time, not result
+   * availability — callers must still gate each fixture's MatchResult by
+   * `resultRecordedAt <= snapshotTime`.
+   */
+  listAllBeforeKickoff(beforeKickoff: ISODateString): Promise<readonly Fixture[]>;
+  /**
    * The point-in-time-safe read (Section 04 fix — Mutable Fixture Status
    * Leakage). Identity fields (competition/season/teams/
    * scheduledKickoffAt/provider identity) are immutable and always
@@ -104,6 +128,36 @@ export interface MatchResultsRepository {
   getLatest(fixtureId: UUID): Promise<MatchResult | undefined>;
   /** The point-in-time-safe read (Section 04 fix — Match Result Correction Leakage): the version with the greatest resultRecordedAt <= asOf, or undefined if none was known yet as of that time. */
   getAsOf(fixtureId: UUID, asOf: string): Promise<MatchResult | undefined>;
+  /**
+   * Section 05 — batch lookup for feature history (avoids N individual
+   * round-trips when walking a team's past fixtures). Returns EVERY
+   * version for every requested fixture (not deduped, not resolved to
+   * any single asOf) — match_results is append-only, so a fixture with a
+   * provider correction has more than one row here. Callers must resolve
+   * each fixture's own point-in-time-correct version themselves (see
+   * `resolveMatchResultAsOf` below and its use in features/history.ts) —
+   * never assume one row per fixture.
+   */
+  listForFixtureIds(fixtureIds: readonly UUID[]): Promise<readonly MatchResult[]>;
+}
+
+/**
+ * Resolves the point-in-time-correct version out of a batch of (possibly
+ * multiple, unordered) MatchResult versions for ONE fixture — the same
+ * "latest resultRecordedAt <= asOf" rule `MatchResultsRepository.getAsOf`
+ * applies per-fixture, exposed so a caller that batch-fetches via
+ * `listForFixtureIds` (which returns every version, ungrouped) can
+ * resolve each fixture's correct version without re-querying one at a
+ * time. Naively keying a Map by fixtureId over an unresolved batch would
+ * pick whichever version happens to appear last, which could be a
+ * provider correction recorded AFTER the snapshot — reintroducing Match
+ * Result Correction Leakage one layer up from the repository fix.
+ */
+export function resolveMatchResultAsOf(versions: readonly MatchResult[], asOf: string): MatchResult | undefined {
+  const asOfMs = new Date(asOf).getTime();
+  const eligible = versions.filter((v) => new Date(v.resultRecordedAt).getTime() <= asOfMs);
+  if (eligible.length === 0) return undefined;
+  return latestByTimestamp(eligible, (v) => v.resultRecordedAt);
 }
 
 export interface NewMatchEventInput {
@@ -293,6 +347,18 @@ export class InMemoryFixturesRepository implements FixturesRepository {
     return undefined;
   }
 
+  async listForTeamBeforeKickoff(teamId: UUID, beforeKickoff: ISODateString): Promise<readonly Fixture[]> {
+    const beforeMs = new Date(beforeKickoff).getTime();
+    return [...this.byId.values()]
+      .filter((f) => (f.homeTeamId === teamId || f.awayTeamId === teamId) && new Date(f.scheduledKickoffAt).getTime() < beforeMs)
+      .sort((a, b) => new Date(a.scheduledKickoffAt).getTime() - new Date(b.scheduledKickoffAt).getTime());
+  }
+
+  async listAllBeforeKickoff(beforeKickoff: ISODateString): Promise<readonly Fixture[]> {
+    const beforeMs = new Date(beforeKickoff).getTime();
+    return [...this.byId.values()].filter((f) => new Date(f.scheduledKickoffAt).getTime() < beforeMs).sort((a, b) => new Date(a.scheduledKickoffAt).getTime() - new Date(b.scheduledKickoffAt).getTime());
+  }
+
   async getByIdAsOf(id: UUID, asOf: string): Promise<Fixture | undefined> {
     const fixture = this.byId.get(id);
     if (!fixture) return undefined;
@@ -337,10 +403,15 @@ export class InMemoryMatchResultsRepository implements MatchResultsRepository {
   }
 
   async getAsOf(fixtureId: UUID, asOf: string): Promise<MatchResult | undefined> {
-    const asOfMs = new Date(asOf).getTime();
-    const eligible = this.versions.filter((v) => v.fixtureId === fixtureId && new Date(v.resultRecordedAt).getTime() <= asOfMs);
-    if (eligible.length === 0) return undefined;
-    return latestByTimestamp(eligible, (v) => v.resultRecordedAt);
+    return resolveMatchResultAsOf(
+      this.versions.filter((v) => v.fixtureId === fixtureId),
+      asOf,
+    );
+  }
+
+  async listForFixtureIds(fixtureIds: readonly UUID[]): Promise<readonly MatchResult[]> {
+    const idSet = new Set(fixtureIds);
+    return this.versions.filter((v) => idSet.has(v.fixtureId));
   }
 }
 
@@ -426,6 +497,23 @@ export class SupabaseFixturesRepository implements FixturesRepository {
     return fixtureRowToDomain(data as FixtureRow);
   }
 
+  async listForTeamBeforeKickoff(teamId: UUID, beforeKickoff: ISODateString): Promise<readonly Fixture[]> {
+    const { data, error } = await this.client
+      .from("fixtures")
+      .select("*")
+      .or(`home_team_id.eq.${teamId},away_team_id.eq.${teamId}`)
+      .lt("scheduled_kickoff_at", beforeKickoff)
+      .order("scheduled_kickoff_at", { ascending: true });
+    if (error || !data) return [];
+    return (data as readonly FixtureRow[]).map(fixtureRowToDomain);
+  }
+
+  async listAllBeforeKickoff(beforeKickoff: ISODateString): Promise<readonly Fixture[]> {
+    const { data, error } = await this.client.from("fixtures").select("*").lt("scheduled_kickoff_at", beforeKickoff).order("scheduled_kickoff_at", { ascending: true });
+    if (error || !data) return [];
+    return (data as readonly FixtureRow[]).map(fixtureRowToDomain);
+  }
+
   async getByIdAsOf(id: UUID, asOf: string): Promise<Fixture | undefined> {
     const fixture = await this.getById(id);
     if (!fixture) return undefined;
@@ -503,6 +591,13 @@ export class SupabaseMatchResultsRepository implements MatchResultsRepository {
       .maybeSingle();
     if (error || !data) return undefined;
     return matchResultRowToDomain(data as MatchResultRow);
+  }
+
+  async listForFixtureIds(fixtureIds: readonly UUID[]): Promise<readonly MatchResult[]> {
+    if (fixtureIds.length === 0) return [];
+    const { data, error } = await this.client.from("match_results").select("*").in("fixture_id", fixtureIds as string[]);
+    if (error || !data) return [];
+    return (data as readonly MatchResultRow[]).map(matchResultRowToDomain);
   }
 }
 

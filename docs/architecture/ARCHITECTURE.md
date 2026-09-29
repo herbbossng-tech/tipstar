@@ -72,9 +72,14 @@ packages/
 ├── football-engine/       Data ingestion/normalization/quality/leakage-protection boundary
 │                          (real, Section 04 — canonical model, provider adapters, quality
 │                          engine, point-in-time query contract; see
-│                          docs/architecture/FOOTBALL_DATA_ARCHITECTURE.md). feature-engineering,
-│                          feature-store, models/{elo,form,xg,statistical,ml,monte-carlo},
-│                          ensemble, calibration, decision remain interface-only (Section 05)
+│                          docs/architecture/FOOTBALL_DATA_ARCHITECTURE.md). Feature store,
+│                          training dataset builder, walk-forward validation, baselines,
+│                          statistical engine (Poisson/Dixon-Coles), Monte Carlo, ML models
+│                          (Random Forest/Gradient Boosted Trees/Neural Network), ensemble,
+│                          calibration, probability consistency, evaluation framework, and the
+│                          prediction output contract are real (Section 05 — see
+│                          docs/architecture/FOOTBALL_INTELLIGENCE.md). decision.ts/service.ts
+│                          (Sport Agent decision/ticket logic) remain interface-only (Section 07)
 ├── aviator-engine/        ingestion, feature-engine, statistical-engine, ml-models, ensemble,
 │                          confidence, signal-engine, risk, double-bet, performance-tracking —
 │                          all interface-only, no computation
@@ -118,14 +123,18 @@ DATA QUALITY                           — real, Section 04 (see DATA_QUALITY.md
 TIME-AWARE DATA STORE / LEAKAGE GUARD  — real, Section 04 (see LEAKAGE_PROTECTION.md)
    ↓
 FEATURE ENGINEERING (point-in-time-safe — see docs/data/DATA_LEAKAGE_PRINCIPLE.md)
+   — real, Section 05 (see FOOTBALL_INTELLIGENCE.md)
    ↓
-MODELS (Elo / form / xG / statistical / ML / Monte Carlo)
+BASELINES / MODELS (Elo / Poisson / Dixon-Coles / Monte Carlo / Random Forest / GBT / Neural Network)
+   — real, Section 05
    ↓
-ENSEMBLE
+ENSEMBLE                               — real, Section 05
    ↓
-CALIBRATION
+CALIBRATION                            — real, Section 05
    ↓
-DECISION / VALUE ENGINE  →  GlobalExecutionGate  →  Ticket/Signal
+PROBABILITY CONSISTENCY + OUTPUT CONTRACT — real, Section 05 (no ticket/wager decision yet)
+   ↓
+DECISION / VALUE ENGINE  →  GlobalExecutionGate  →  Ticket/Signal   — Section 07
    ↓
 DISTRIBUTION (Telegram, gated by Publishing Policy Engine)
    ↓
@@ -223,7 +232,36 @@ REPORTING / PERFORMANCE (derived only from real settled data)
   is enforced by absence (nothing in `apps/mini-app` imports
   `@sport-os/football-engine`), the same way it was before this section.
 
+## Section 05 boundaries
+
+- `football-engine` now has a real intelligence layer — feature store,
+  training dataset builder, walk-forward validation, baselines,
+  statistical engine, Monte Carlo, ML models (Random Forest/Gradient
+  Boosted Trees/Neural Network — all from-scratch TypeScript, no ML
+  runtime dependency added), ensemble, calibration, probability
+  consistency, evaluation framework, and the prediction output contract
+  — see `FOOTBALL_INTELLIGENCE.md`, `MODEL_VALIDATION.md`.
+- No Sport Agent decision logic, ticket generation, value-selection
+  policy, publishing policy, Telegram auto-publishing, bookmaker
+  execution, or SportyBet automation was built — `decision.ts`/
+  `service.ts` remain the Section 01 interface-only placeholders,
+  unchanged. This section produces probabilities; Section 07 decides
+  what to do with them.
+- Still no live football/odds provider connected — unchanged from
+  Section 04. Every intelligence computation this section validates is
+  against the same deterministic synthetic dataset.
+- No fabricated model performance — every accuracy/log-loss/Brier/ROC-
+  AUC number in this codebase's tests comes from a real computation
+  against synthetic data, explicitly labeled as such; no claim of
+  real-world predictive accuracy is made anywhere.
+- No arbitrary ensemble weights presented as optimal — every ensemble
+  configuration is either a documented fixed baseline experiment or
+  fit by a real, tested gradient-descent optimizer against a
+  validation-period sample.
+
 See also:
+- [`FOOTBALL_INTELLIGENCE.md`](./FOOTBALL_INTELLIGENCE.md)
+- [`MODEL_VALIDATION.md`](./MODEL_VALIDATION.md)
 - [`FOOTBALL_DATA_ARCHITECTURE.md`](./FOOTBALL_DATA_ARCHITECTURE.md)
 - [`DATA_QUALITY.md`](./DATA_QUALITY.md)
 - [`LEAKAGE_PROTECTION.md`](./LEAKAGE_PROTECTION.md)
