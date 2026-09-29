@@ -33,7 +33,7 @@ async function seedLeague() {
       provider: "feature_test_synthetic",
       providerFixtureId: `${home}-${away}-${kickoff}`,
     });
-    await matchResults.upsert({ fixtureId: fixture.id, homeGoals, awayGoals, halftimeHomeGoals: undefined, halftimeAwayGoals: undefined, resultRecordedAt: recordedAt, source: "feature_test_synthetic" });
+    await matchResults.insert({ fixtureId: fixture.id, homeGoals, awayGoals, halftimeHomeGoals: undefined, halftimeAwayGoals: undefined, resultRecordedAt: recordedAt, source: "feature_test_synthetic" });
     return fixture;
   }
 
@@ -73,7 +73,7 @@ describe("features/history.ts — leakage-safe history primitive", () => {
       provider: "feature_test_synthetic",
       providerFixtureId: "late-result-fixture",
     });
-    await matchResults.upsert({ fixtureId: lateFixture.id, homeGoals: 5, awayGoals: 0, halftimeHomeGoals: undefined, halftimeAwayGoals: undefined, resultRecordedAt: "2026-01-25T00:00:00Z", source: "feature_test_synthetic" });
+    await matchResults.insert({ fixtureId: lateFixture.id, homeGoals: 5, awayGoals: 0, halftimeHomeGoals: undefined, halftimeAwayGoals: undefined, resultRecordedAt: "2026-01-25T00:00:00Z", source: "feature_test_synthetic" });
 
     // snapshotTime is BEFORE the result was recorded — must be excluded.
     const history = await getTeamMatchHistory({ fixtures, matchResults }, teamA, "2026-01-22T15:00:00Z", "2026-01-21T00:00:00Z");
@@ -82,6 +82,63 @@ describe("features/history.ts — leakage-safe history primitive", () => {
     // Once the snapshot moves past when the result became known, it must appear.
     const laterHistory = await getTeamMatchHistory({ fixtures, matchResults }, teamA, "2026-01-30T15:00:00Z", "2026-01-26T00:00:00Z");
     expect(laterHistory.matches.some((m) => m.fixture.id === lateFixture.id)).toBe(true);
+  });
+
+  it("resolves the point-in-time-correct match-result VERSION, never a later correction leaking through an earlier snapshot (Match Result Correction Leakage, one layer up from the repository)", async () => {
+    const { fixtures, matchResults, teamA, teamB } = await seedLeague();
+    // A match with a provider correction: original 1-0 recorded right after
+    // kickoff, corrected to 2-0 days later (e.g. a VAR/stats review).
+    // listForFixtureIds returns BOTH versions ungrouped — a naive Map keyed
+    // by fixtureId would silently keep whichever version happens to be last,
+    // which is exactly the bug this test guards against.
+    const correctedFixture = await fixtures.upsert({
+      competitionId: generateId(),
+      seasonId: undefined,
+      homeTeamId: teamA,
+      awayTeamId: teamB,
+      scheduledKickoffAt: "2026-01-10T15:00:00Z",
+      status: "finished",
+      providerStatusRaw: "FT",
+      provider: "feature_test_synthetic",
+      providerFixtureId: "corrected-result-fixture",
+    });
+    await matchResults.insert({
+      fixtureId: correctedFixture.id,
+      homeGoals: 1,
+      awayGoals: 0,
+      halftimeHomeGoals: undefined,
+      halftimeAwayGoals: undefined,
+      resultRecordedAt: "2026-01-10T17:00:00Z",
+      source: "feature_test_synthetic",
+    });
+    await matchResults.insert({
+      fixtureId: correctedFixture.id,
+      homeGoals: 2,
+      awayGoals: 0,
+      halftimeHomeGoals: undefined,
+      halftimeAwayGoals: undefined,
+      resultRecordedAt: "2026-01-14T09:00:00Z",
+      source: "feature_test_synthetic",
+    });
+
+    // Snapshot BEFORE the correction was recorded: must see the ORIGINAL
+    // 1-0, never the not-yet-known 2-0 correction.
+    const beforeCorrection = await getTeamMatchHistory({ fixtures, matchResults }, teamA, "2026-01-22T15:00:00Z", "2026-01-12T00:00:00Z");
+    const beforeMatch = beforeCorrection.matches.find((m) => m.fixture.id === correctedFixture.id);
+    expect(beforeMatch).toBeDefined();
+    expect(beforeMatch!.result.homeGoals).toBe(1);
+
+    // Snapshot AFTER the correction was recorded: must see the corrected 2-0.
+    const afterCorrection = await getTeamMatchHistory({ fixtures, matchResults }, teamA, "2026-01-22T15:00:00Z", "2026-01-16T00:00:00Z");
+    const afterMatch = afterCorrection.matches.find((m) => m.fixture.id === correctedFixture.id);
+    expect(afterMatch).toBeDefined();
+    expect(afterMatch!.result.homeGoals).toBe(2);
+
+    // Same guarantee for the global (all-teams) history Elo replays from.
+    const globalBefore = await getGlobalMatchHistory({ fixtures, matchResults }, "2026-01-22T15:00:00Z", "2026-01-12T00:00:00Z");
+    expect(globalBefore.find((m) => m.fixture.id === correctedFixture.id)?.result.homeGoals).toBe(1);
+    const globalAfter = await getGlobalMatchHistory({ fixtures, matchResults }, "2026-01-22T15:00:00Z", "2026-01-16T00:00:00Z");
+    expect(globalAfter.find((m) => m.fixture.id === correctedFixture.id)?.result.homeGoals).toBe(2);
   });
 
   it("never includes the target fixture itself or a future fixture", async () => {

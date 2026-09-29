@@ -161,20 +161,25 @@ should happen alongside whichever real provider is picked (question
 #11), since the right raw shape depends entirely on what that provider
 returns.
 
-## 13. Is match-result correction tracking (`corrected_at`/`correction_count`) sufficient, or does it need full historical versioning?
+## 13. Is match-result correction tracking (`corrected_at`/`correction_count`) sufficient, or does it need full historical versioning? — RESOLVED
 
-`match_results`' current design (Section 04) treats a second write for
-the same fixture as a correction — it bumps `corrected_at`/
-`correction_count` and overwrites the goal counts in place, but does not
-retain the *previous* value once corrected. This was a deliberate
-scope-trim (see `FOOTBALL_DATA_ARCHITECTURE.md`'s "Upsert rules"), judged
-sufficient for this section's goal of provenance-aware, leakage-safe
-data. Section 05 did not end up needing it (labels are derived from
-whatever the current, possibly-corrected result is — the correction
-history itself was never a training input). Whether a future audit/
-compliance need ever requires reconstructing "what did we believe the
-score was at time T, before it was corrected" — which would need a full
-append-only correction history instead — remains unresolved.
+**Resolved during PR review.** The original scope-trim (a single mutable
+row per fixture, UPDATEd in place on correction while preserving the
+original `result_recorded_at`) turned out to be a real point-in-time
+correctness bug, not just a completeness gap: a historical query using
+the preserved original timestamp could see the corrected score —
+"Match Result Correction Leakage." `match_results` is now append-only
+result VERSIONS (`MatchResultsRepository.insert()`/`getAsOf()`/
+`getLatest()`), giving full historical versioning: "what did we believe
+the score was at time T" is exactly what `getAsOf(fixtureId, T)`
+answers. See `FOOTBALL_DATA_ARCHITECTURE.md`'s "Point-in-time
+correctness fixes" and `LEAKAGE_PROTECTION.md`. Section 05's dataset
+builder still deliberately derives training labels from
+`getLatest()` (the current, possibly-corrected result) rather than
+`getAsOf()` — labels are allowed to see the final outcome, that is what
+makes them labels — but every feature-history read (`features/history.ts`)
+uses the point-in-time-safe resolution the versioned model now makes
+possible.
 
 ## 14. xG provider availability
 

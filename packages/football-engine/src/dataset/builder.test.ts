@@ -15,10 +15,10 @@ async function seed() {
   const teamB = generateId();
 
   const homeWin = await fixtures.upsert({ competitionId, seasonId: undefined, homeTeamId: teamA, awayTeamId: teamB, scheduledKickoffAt: "2026-01-05T15:00:00Z", status: "finished", providerStatusRaw: "FT", provider: "dataset_test", providerFixtureId: "home-win" });
-  await matchResults.upsert({ fixtureId: homeWin.id, homeGoals: 2, awayGoals: 0, halftimeHomeGoals: undefined, halftimeAwayGoals: undefined, resultRecordedAt: "2026-01-05T17:00:00Z", source: "dataset_test" });
+  await matchResults.insert({ fixtureId: homeWin.id, homeGoals: 2, awayGoals: 0, halftimeHomeGoals: undefined, halftimeAwayGoals: undefined, resultRecordedAt: "2026-01-05T17:00:00Z", source: "dataset_test" });
 
   const draw = await fixtures.upsert({ competitionId, seasonId: undefined, homeTeamId: teamB, awayTeamId: teamA, scheduledKickoffAt: "2026-01-12T15:00:00Z", status: "finished", providerStatusRaw: "FT", provider: "dataset_test", providerFixtureId: "draw" });
-  await matchResults.upsert({ fixtureId: draw.id, homeGoals: 1, awayGoals: 1, halftimeHomeGoals: undefined, halftimeAwayGoals: undefined, resultRecordedAt: "2026-01-12T17:00:00Z", source: "dataset_test" });
+  await matchResults.insert({ fixtureId: draw.id, homeGoals: 1, awayGoals: 1, halftimeHomeGoals: undefined, halftimeAwayGoals: undefined, resultRecordedAt: "2026-01-12T17:00:00Z", source: "dataset_test" });
 
   const noResult = await fixtures.upsert({ competitionId, seasonId: undefined, homeTeamId: teamA, awayTeamId: teamB, scheduledKickoffAt: "2026-01-19T15:00:00Z", status: "scheduled", providerStatusRaw: "NS", provider: "dataset_test", providerFixtureId: "no-result-yet" });
 

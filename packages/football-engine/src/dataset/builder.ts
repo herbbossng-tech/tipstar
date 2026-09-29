@@ -49,7 +49,7 @@ export async function buildTrainingDataset(deps: BuildDatasetDependencies, param
   const excluded: { fixtureId: string; reason: string }[] = [];
 
   for (const fixture of params.fixtures) {
-    const result = await deps.matchResults.getByFixtureId(fixture.id);
+    const result = await deps.matchResults.getLatest(fixture.id);
     if (!result) {
       excluded.push({ fixtureId: fixture.id, reason: "No match result exists for this fixture — cannot derive a label." });
       continue;

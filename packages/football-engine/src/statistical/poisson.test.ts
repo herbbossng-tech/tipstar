@@ -54,7 +54,7 @@ describe("estimateGoalExpectations", () => {
 
     async function play(home: string, away: string, hg: number, ag: number, kickoff: string) {
       const f = await fixtures.upsert({ competitionId, seasonId: undefined, homeTeamId: home, awayTeamId: away, scheduledKickoffAt: kickoff, status: "finished", providerStatusRaw: "FT", provider: "poisson_test", providerFixtureId: `${home}-${away}-${kickoff}` });
-      await matchResults.upsert({ fixtureId: f.id, homeGoals: hg, awayGoals: ag, halftimeHomeGoals: undefined, halftimeAwayGoals: undefined, resultRecordedAt: kickoff, source: "poisson_test" });
+      await matchResults.insert({ fixtureId: f.id, homeGoals: hg, awayGoals: ag, halftimeHomeGoals: undefined, halftimeAwayGoals: undefined, resultRecordedAt: kickoff, source: "poisson_test" });
     }
 
     await play(strongTeam, weakTeam, 4, 0, "2026-01-01T15:00:00Z");

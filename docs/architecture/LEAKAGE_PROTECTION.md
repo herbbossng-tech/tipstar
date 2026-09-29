@@ -68,25 +68,35 @@ before the type is ever constructed:
 
 ### Defense in depth
 
-Every repository this function calls already exposes a point-in-time-safe
-`*AsOf(id, asOf)` method (`repositories/fixtures.ts`'s
-`listForFixtureAsOf`, `repositories/observations.ts`'s
-`listForTeamAsOf`/`listForFixtureAsOf`) that filters `observedAt <= asOf`
-at the query layer — server-side (`.lte("observed_at", asOf)`) for the
-Supabase implementations, in-memory for tests. `getDataAsOf()` does not
-stop at trusting that filter: it **independently re-verifies every
-single record it gets back** against `snapshotTime`, and returns a
-structured `InternalError` tagged with the matching `LeakageType` code
-if a repository ever returns something it should not have. This makes
-leakage protection structurally hard to violate by accident — a future
-bug in one repository's `*AsOf` implementation is caught here, not
-three layers downstream in a trained model.
+Every repository this function calls exposes a point-in-time-safe
+`*AsOf(id, asOf)` method — `repositories/fixtures.ts`'s
+`listForFixtureAsOf` (match events), `getByIdAsOf` (fixture identity +
+status), `getAsOf` (match results), and `repositories/observations.ts`'s
+`listForTeamAsOf`/`listForFixtureAsOf` (team/odds observations) — that
+filters `observedAt <= asOf` (or the equivalent field) at the query
+layer — server-side (`.lte(...)`) for the Supabase implementations,
+in-memory for tests. `getDataAsOf()` does not stop at trusting that
+filter: for match events, team observations, and odds observations, it
+**independently re-verifies every single record it gets back** against
+`snapshotTime`, and returns a structured `InternalError` tagged with
+the matching `LeakageType` code if a repository ever returns something
+it should not have. This makes leakage protection structurally hard to
+violate by accident — a future bug in one repository's `*AsOf`
+implementation is caught here, not three layers downstream in a
+trained model. The match result gets the same re-verification
+(`FUTURE_RESULT_LEAKAGE` if `getAsOf` ever returns a version whose
+`resultRecordedAt` is actually after `snapshotTime`); the fixture
+itself does not need a symmetric re-check — `getByIdAsOf` either
+returns a fixture whose status fields it resolved from an observation
+already known `<= asOf` (structurally impossible to be future-dated),
+or `undefined`, which `getDataAsOf` treats as "not found."
 
-The match result is handled slightly differently: a result that exists
-but was recorded after `snapshotTime` is not an error, it is correctly
-excluded — `matchResult` is `undefined` either way, exactly as it
-should be, since Section 05 must never be able to tell "no result yet"
-apart from "result exists but isn't available to you."
+The match result is handled slightly differently: a result version that
+exists but has a `resultRecordedAt` after `snapshotTime` is not an
+error, it is correctly excluded — `getAsOf` simply won't return it, so
+`matchResult` is `undefined` either way, exactly as it should be, since
+Section 05 must never be able to tell "no result yet" apart from
+"result exists but isn't available to you."
 
 ### Pre-match snapshot boundary
 
@@ -136,6 +146,55 @@ still catches it and returns the matching `LeakageType` error
 re-verification described above is real, not merely present as
 dead code — a query-layer bug is caught at the `LeakageGuard` boundary,
 not silently passed through.
+
+## Match Result Correction Leakage / Mutable Fixture Status Leakage (PR review fixes)
+
+Two merge-blocking point-in-time bugs were found in review and fixed:
+
+- **Match Result Correction Leakage**: `match_results` used to be one
+  mutable row per fixture; a provider correction UPDATEd it while
+  *preserving* the original `resultRecordedAt`, so a historical query
+  using that timestamp could see the corrected score. Fixed by making
+  `match_results` append-only VERSIONS — `MatchResultsRepository.
+  insert()` never mutates a prior row, and `getAsOf(fixtureId, asOf)`
+  resolves to the version with the greatest `resultRecordedAt <= asOf`.
+- **Mutable Fixture Status Leakage**: `getDataAsOf()` read the fixture
+  via `getById()`, which returns CURRENT (mutable) status — a pre-match
+  snapshot could see a status (e.g. `finished`) the fixture had not yet
+  reached. Fixed with `fixture_status_observations`, an append-only
+  history table, and `FixturesRepository.getByIdAsOf(id, asOf)`, which
+  `getDataAsOf()` now calls instead of `getById()`.
+
+See `FOOTBALL_DATA_ARCHITECTURE.md`'s "Point-in-time correctness fixes"
+for the full design rationale. Regression coverage exists at every
+layer:
+
+- `repositories/repositories.test.ts` — `InMemoryMatchResultsRepository`'s
+  `getAsOf`/`getLatest` and `InMemoryFixturesRepository`'s
+  `getByIdAsOf`/`getById`, each with the required a/b/c/d cases (pre-
+  correction/transition snapshot, post-correction/transition snapshot,
+  the correction/transition never altering an earlier snapshot, multiple
+  corrections/transitions resolving correctly by `asOf`).
+- `leakage-guard.test.ts` — two new `describe` blocks, **"LeakageGuard —
+  Match Result Correction Leakage regression"** and **"LeakageGuard —
+  Mutable Fixture Status Leakage regression"**, exercising the exact
+  scenarios above end-to-end through `getDataAsOf()` itself, not just
+  the repository layer.
+- `tests/database/40_football_rls_cases.sql` FB TESTs 15–21 — the same
+  two scenarios against the real Postgres schema (not just the in-memory
+  test double), plus RLS coverage for the new
+  `fixture_status_observations` table.
+
+A further review round hardened both fixes: the fixture upsert and its
+status observation are now one atomic Postgres function call (never two
+round-trips that could commit independently), match-result versions
+sharing the exact same `resultRecordedAt` resolve deterministically via
+a `version_seq` tiebreaker, and a fixture's identity fields
+(competition/season/home/away team) are immutable, with a repeat
+sighting reporting a different identity quarantined rather than
+silently applied. See `FOOTBALL_DATA_ARCHITECTURE.md`'s "Hardening
+pass" section and `tests/database/40_football_rls_cases.sql` FB TESTs
+22–27.
 
 ## What this does *not* do
 

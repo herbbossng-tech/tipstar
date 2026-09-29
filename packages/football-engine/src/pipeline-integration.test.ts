@@ -41,7 +41,7 @@ describe("Section 05 end-to-end pipeline", () => {
 
     async function play(home: string, away: string, hg: number, ag: number, kickoff: string) {
       const f = await fixtures.upsert({ competitionId, seasonId: undefined, homeTeamId: home, awayTeamId: away, scheduledKickoffAt: kickoff, status: "finished", providerStatusRaw: "FT", provider: "pipeline_test", providerFixtureId: `${home}-${away}-${kickoff}` });
-      await matchResults.upsert({ fixtureId: f.id, homeGoals: hg, awayGoals: ag, halftimeHomeGoals: undefined, halftimeAwayGoals: undefined, resultRecordedAt: kickoff, source: "pipeline_test" });
+      await matchResults.insert({ fixtureId: f.id, homeGoals: hg, awayGoals: ag, halftimeHomeGoals: undefined, halftimeAwayGoals: undefined, resultRecordedAt: kickoff, source: "pipeline_test" });
       return f;
     }
 

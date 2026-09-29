@@ -12,6 +12,7 @@ import {
   testFixtureProvider,
 } from "./adapters/test-fixture-provider.js";
 import { ingestFixtures, ingestMatchEvents, ingestMatchResults, ingestOddsObservations, ingestReferenceData, type IngestionDependencies } from "./ingestion.js";
+import type { FootballDataProvider } from "./provider.js";
 import { InMemoryFixturesRepository, InMemoryMatchEventsRepository, InMemoryMatchResultsRepository } from "./repositories/fixtures.js";
 import { InMemoryIngestionRunsRepository } from "./repositories/ingestion-runs.js";
 import { InMemoryOddsObservationsRepository, InMemoryTeamObservationsRepository } from "./repositories/observations.js";
@@ -120,6 +121,60 @@ describe("ingestFixtures", () => {
     expect(run.recordsRejected).toBe(run.recordsReceived);
     expect(run.recordsInserted).toBe(0);
   });
+
+  it("regression (item 3 — fixture identity immutability): quarantines a repeat sighting reporting a DIFFERENT home/away team for an already-ingested provider_fixture_id, rather than silently rewriting the fixture's identity", async () => {
+    const deps = buildDeps();
+    await seedReferenceData(deps);
+    await ingestFixtures(deps, testFixtureProvider, normalizeTestFixtureFixture, "backfill");
+    const before = await deps.fixtures.getByProviderIdentity(TEST_FIXTURE_PROVIDER_NAME, "TFP-FIX-1");
+    expect(before?.homeTeamId).toBeDefined();
+
+    // A provider adapter that reports TFP-FIX-1 again, but this time
+    // with TEAM-3/TEAM-4 instead of the original TEAM-1/TEAM-2 — a
+    // malformed or fraudulent re-identification, never a legitimate
+    // "correction" per FOOTBALL_DATA_ARCHITECTURE.md's "Fixture identity
+    // immutability".
+    const mismatchedIdentityProvider: FootballDataProvider = {
+      provider: TEST_FIXTURE_PROVIDER_NAME,
+      config: testFixtureProvider.config,
+      fixtures: {
+        provider: TEST_FIXTURE_PROVIDER_NAME,
+        async fetchFixtures() {
+          return {
+            status: "ok",
+            fetchedAt: new Date().toISOString(),
+            records: [
+              {
+                kind: "fixture",
+                id: "TFP-FIX-1",
+                competition_id: "TFP-COMP-1",
+                season_id: "TFP-SEASON-1",
+                home_team_id: "TFP-TEAM-3",
+                away_team_id: "TFP-TEAM-4",
+                kickoff_utc: "2026-01-10T19:00:00Z",
+                status_code: "FT",
+              },
+            ],
+          };
+        },
+      },
+    };
+
+    const run = await ingestFixtures(deps, mismatchedIdentityProvider, normalizeTestFixtureFixture, "live");
+    expect(run.recordsRejected).toBe(1);
+    expect(run.recordsUpdated).toBe(0);
+    expect(run.recordsInserted).toBe(0);
+
+    const quarantined = await deps.quarantine.listForRun(run.id);
+    expect(quarantined).toHaveLength(1);
+    expect(quarantined[0]?.reason.toLowerCase()).toContain("immutable");
+
+    // The fixture on file must be byte-for-byte unchanged — never
+    // partially rewritten with the new (mismatched) team ids.
+    const after = await deps.fixtures.getByProviderIdentity(TEST_FIXTURE_PROVIDER_NAME, "TFP-FIX-1");
+    expect(after?.homeTeamId).toBe(before?.homeTeamId);
+    expect(after?.awayTeamId).toBe(before?.awayTeamId);
+  });
 });
 
 describe("ingestMatchResults / ingestMatchEvents / ingestOddsObservations", () => {
@@ -139,7 +194,7 @@ describe("ingestMatchResults / ingestMatchEvents / ingestOddsObservations", () =
     expect(run.status).toBe("completed");
 
     const fixture = await deps.fixtures.getByProviderIdentity(TEST_FIXTURE_PROVIDER_NAME, "TFP-FIX-1");
-    const result = await deps.matchResults.getByFixtureId(fixture!.id);
+    const result = await deps.matchResults.getLatest(fixture!.id);
     expect(result?.homeGoals).toBe(2);
     expect(result?.awayGoals).toBe(1);
   });

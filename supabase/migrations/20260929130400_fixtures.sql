@@ -44,15 +44,24 @@ create trigger set_fixtures_updated_at
 before update on public.fixtures
 for each row execute function public.set_updated_at();
 
--- One current result row per fixture. A provider correction UPDATEs
--- this row (bumping correction_count/corrected_at) rather than losing
--- the original — full historical versioning of corrections was judged
--- unnecessary complexity for this section; the audit_logs entry
--- recorded alongside every correction (see FOOTBALL_DATA_ARCHITECTURE.md)
--- is the provenance trail.
+-- Append-only result VERSIONS, one row per version, never mutated once
+-- written (no `unique(fixture_id)` — deliberately allows many rows per
+-- fixture). A provider correction INSERTs a new row rather than
+-- UPDATEing the prior one: `result_recorded_at` is that row's own,
+-- immutable "when did we learn this" timestamp, never overwritten or
+-- inherited from an earlier version, which is exactly what makes it
+-- safe to filter on for point-in-time queries (`result_recorded_at <=
+-- asOf`). `corrected_at`/`correction_count` are per-version provenance
+-- (null/0 for the original version; set/incrementing for each
+-- correction after it). This replaces an earlier design that UPDATEd a
+-- single row per fixture while preserving only the original
+-- `result_recorded_at` — that let a correction's new score leak through
+-- the original (pre-correction) timestamp on any historical, point-in-
+-- time query. See LEAKAGE_PROTECTION.md and OPEN_QUESTIONS.md #13
+-- (resolved).
 create table public.match_results (
   id uuid primary key default gen_random_uuid(),
-  fixture_id uuid not null references public.fixtures(id) on delete cascade unique,
+  fixture_id uuid not null references public.fixtures(id) on delete cascade,
   home_goals integer not null check (home_goals >= 0),
   away_goals integer not null check (away_goals >= 0),
   halftime_home_goals integer null check (halftime_home_goals is null or halftime_home_goals >= 0),
@@ -61,12 +70,29 @@ create table public.match_results (
   source text not null,
   corrected_at timestamptz null,
   correction_count integer not null default 0,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  -- Deterministic tiebreaker (PR review fix — Deterministic Match-Result
+  -- Version Ordering). result_recorded_at is the temporal "known-at"
+  -- field a point-in-time query filters on, but two versions CAN share
+  -- the exact same result_recorded_at (e.g. a provider re-reports at the
+  -- same nominal timestamp) — without a secondary sort key, `ORDER BY
+  -- result_recorded_at DESC LIMIT 1` has no guaranteed winner among
+  -- ties, so which row getAsOf()/getLatest() return would be
+  -- unspecified. version_seq is a plain auto-incrementing identity
+  -- column with no temporal meaning of its own — it exists purely to
+  -- make "the most recently inserted of the tied versions wins"
+  -- deterministic, mirroring the in-memory repository's already-
+  -- deterministic array-insertion-order behavior. Never conflate this
+  -- with created_at (a plain timestamp column is not itself a reliable
+  -- total order — clock resolution/skew can produce ties too) or with
+  -- result_recorded_at (the temporal field, which this does not
+  -- replace).
+  version_seq integer generated always as identity,
+  created_at timestamptz not null default now()
 );
 
-alter table public.match_results enable row level security;
+comment on table public.match_results is
+  'Append-only result versions — many rows per fixture_id are expected (the original plus one per correction). Never UPDATEd after insert. The point-in-time-safe read orders by result_recorded_at DESC, version_seq DESC and takes the first row (see SupabaseMatchResultsRepository.getAsOf); "current" reads (getLatest) use the same ordering with no asOf filter.';
 
-create trigger set_match_results_updated_at
-before update on public.match_results
-for each row execute function public.set_updated_at();
+create index match_results_fixture_id_recorded_at_idx on public.match_results (fixture_id, result_recorded_at, version_seq);
+
+alter table public.match_results enable row level security;

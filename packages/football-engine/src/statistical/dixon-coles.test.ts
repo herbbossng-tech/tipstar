@@ -82,7 +82,7 @@ describe("estimateDixonColesParameters — integration with real history", () =>
 
     async function play(home: string, away: string, hg: number, ag: number, kickoff: string) {
       const f = await fixtures.upsert({ competitionId, seasonId: undefined, homeTeamId: home, awayTeamId: away, scheduledKickoffAt: kickoff, status: "finished", providerStatusRaw: "FT", provider: "dc_test", providerFixtureId: `${home}-${away}-${kickoff}` });
-      await matchResults.upsert({ fixtureId: f.id, homeGoals: hg, awayGoals: ag, halftimeHomeGoals: undefined, halftimeAwayGoals: undefined, resultRecordedAt: kickoff, source: "dc_test" });
+      await matchResults.insert({ fixtureId: f.id, homeGoals: hg, awayGoals: ag, halftimeHomeGoals: undefined, halftimeAwayGoals: undefined, resultRecordedAt: kickoff, source: "dc_test" });
     }
 
     await play(teamA, teamB, 1, 1, "2026-01-01T15:00:00Z");

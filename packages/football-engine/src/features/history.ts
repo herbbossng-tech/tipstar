@@ -1,6 +1,6 @@
 import type { ISODateString, UUID } from "@sport-os/shared";
 import type { Fixture, MatchResult } from "../canonical.js";
-import type { FixturesRepository, MatchResultsRepository } from "../repositories/fixtures.js";
+import { resolveMatchResultAsOf, type FixturesRepository, type MatchResultsRepository } from "../repositories/fixtures.js";
 
 /**
  * The single leakage-safe history primitive every rolling feature family
@@ -42,8 +42,22 @@ export interface HistoryDependencies {
   readonly matchResults: MatchResultsRepository;
 }
 
-function resultKnownBy(result: MatchResult, snapshotMs: number): boolean {
-  return new Date(result.resultRecordedAt).getTime() <= snapshotMs;
+/**
+ * Groups a batch of (possibly multiple, per fixture) MatchResult versions
+ * by fixtureId — `listForFixtureIds` returns every version ungrouped,
+ * since match_results is append-only, and each fixture's point-in-time-
+ * correct version must be resolved individually (see
+ * `resolveMatchResultAsOf`), never assumed to be the one row a naive
+ * `Map` keyed by fixtureId would happen to keep.
+ */
+function groupByFixtureId(results: readonly MatchResult[]): Map<UUID, MatchResult[]> {
+  const grouped = new Map<UUID, MatchResult[]>();
+  for (const result of results) {
+    const existing = grouped.get(result.fixtureId);
+    if (existing) existing.push(result);
+    else grouped.set(result.fixtureId, [result]);
+  }
+  return grouped;
 }
 
 export async function getTeamMatchHistory(deps: HistoryDependencies, teamId: UUID, beforeKickoff: ISODateString, snapshotTime: ISODateString): Promise<TeamMatchHistory> {
@@ -53,14 +67,14 @@ export async function getTeamMatchHistory(deps: HistoryDependencies, teamId: UUI
   }
 
   const results = await deps.matchResults.listForFixtureIds(fixtures.map((f) => f.id));
-  const resultByFixtureId = new Map(results.map((r) => [r.fixtureId, r]));
-  const snapshotMs = new Date(snapshotTime).getTime();
+  const versionsByFixtureId = groupByFixtureId(results);
 
   const matches: HistoricalMatch[] = [];
   for (const fixture of fixtures) {
-    const result = resultByFixtureId.get(fixture.id);
+    const versions = versionsByFixtureId.get(fixture.id);
+    if (!versions) continue;
+    const result = resolveMatchResultAsOf(versions, snapshotTime);
     if (!result) continue;
-    if (!resultKnownBy(result, snapshotMs)) continue;
     matches.push({ fixture, result, isHome: fixture.homeTeamId === teamId });
   }
 
@@ -78,14 +92,14 @@ export async function getGlobalMatchHistory(deps: HistoryDependencies, beforeKic
   if (fixtures.length === 0) return [];
 
   const results = await deps.matchResults.listForFixtureIds(fixtures.map((f) => f.id));
-  const resultByFixtureId = new Map(results.map((r) => [r.fixtureId, r]));
-  const snapshotMs = new Date(snapshotTime).getTime();
+  const versionsByFixtureId = groupByFixtureId(results);
 
   const matches: GlobalHistoricalMatch[] = [];
   for (const fixture of fixtures) {
-    const result = resultByFixtureId.get(fixture.id);
+    const versions = versionsByFixtureId.get(fixture.id);
+    if (!versions) continue;
+    const result = resolveMatchResultAsOf(versions, snapshotTime);
     if (!result) continue;
-    if (!resultKnownBy(result, snapshotMs)) continue;
     matches.push({ fixture, result });
   }
   return matches;
