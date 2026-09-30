@@ -14,11 +14,11 @@ only" means an interface exists with no default implementation at all
 | 1 | IdentityService | `@sport-os/platform` | `identity.ts` | **Real** (Section 03 — `DatabaseIdentityService` + `SupabaseUsersRepository`/`InMemoryUsersRepository`); `NotImplementedIdentityService` retained for any caller that hasn't migrated. Distinct from `TelegramAuthenticationService` below, which answers "who is this" for a single request/session, not "what account does this map to." |
 | 2 | LicenseService | `@sport-os/platform` | `license.ts` | **Real** (Section 03 — `DatabaseLicenseService` + Supabase/InMemory repositories for licenses/entitlements/limits); `licenseAllows()`/`isLicenseUsable()` decision rules are real and now also honor `startsAt` |
 | 3 | AgentService | `@sport-os/agent-core` | `agent-service.ts` | **Real** (`InMemoryAgentRegistry`) |
-| 4 | FootballService | `@sport-os/football-engine` | `service.ts` | NotImplemented (depends on Section 07's decision logic; both the data layer and the full intelligence/prediction layer it will eventually read from are now real — see "Football Data Boundary" and "Football Intelligence Boundary" below) |
+| 4 | FootballService | `@sport-os/football-engine` | `service.ts` | NotImplemented — a distinct, still-unbuilt aggregate service. Note: `decision.ts`'s `DecisionEngine` (a *different*, already-fixed Section 01 contract in the same package) is **real** as of Section 07 — see "Decision / Value / Ticket / Risk / Execution Boundary" below. |
 | 5 | AviatorService | `@sport-os/aviator-engine` | `service.ts` | NotImplemented (depends on the whole Aviator pipeline) |
-| 6 | RiskService | `@sport-os/risk-engine` | `service.ts` | NotImplemented (sport-specific risk models). Note: `GlobalDailyRiskController` in the same package is **real** — it is a different, cross-sport concern. |
-| 7 | MarketService | `@sport-os/market-engine` | `service.ts` | NotImplemented (needs a real odds provider) |
-| 8 | TicketService | `@sport-os/settlement-engine` | `service.ts` | NotImplemented (needs the Decision Engine) |
+| 6 | RiskService | `@sport-os/risk-engine` | `service.ts` | NotImplemented — no concrete class implements the generic `assess(agentType, proposedStake)` contract yet. Note: `GlobalDailyRiskController` (real, cross-sport daily kill switch) and, as of Section 07, `ticket-risk-engine.ts`'s `evaluateTicketRisk()`/`evaluateAviatorDailyRisk()` (real, `RiskAssessment`-shaped ticket/Aviator risk evaluation) are both **real** — see "Decision / Value / Ticket / Risk / Execution Boundary" below. |
+| 7 | MarketService | `@sport-os/market-engine` | `service.ts` | NotImplemented (needs a real odds provider — this is a live-data-fetching aggregate service, distinct from `types.ts`, which is real as of Section 07: canonical `MarketType`/`MarketObservation`, fair-odds/implied-probability/overround math, `checkOddsValidity()`) |
+| 8 | TicketService | `@sport-os/settlement-engine` | `service.ts` | NotImplemented — a distinct, still-unbuilt aggregate service; `@sport-os/football-engine/ticket-engine.ts`'s Ticket Engine (real, Section 07) is not this contract — see below. |
 | 9 | SettlementService | `@sport-os/settlement-engine` | `service.ts` | NotImplemented (needs real match results). Ticket rules (`rules.ts`) are **real**. |
 | 10 | TelegramService | `@sport-os/telegram` | `service.ts` | **Real** (`TelegramBotApiService`, a thin Bot API client) |
 | 11 | PublishingService | `@sport-os/telegram` | `service.ts` | NotImplemented (needs a persisted destination catalog). The Publishing Policy Engine (`publishing-policy.ts`) that decides *whether* a destination accepts content is **real**. |
@@ -59,10 +59,17 @@ admin-only or service-role-only) are the durable persistence.
 pipeline (identity → license → entitlement → risk → integration
 availability → execution authorization) as real orchestration: a list of
 injected `GateCheck`s, evaluated in order, short-circuiting on the first
-denial. No individual check's business logic is implemented in Section
-01 — callers inject test doubles today; real checks (backed by
-IdentityService, LicenseService, etc.) are wired in as those services
-gain real implementations.
+denial. As of Section 07, the individual checks are also **real**:
+`createIdentityGateCheck`/`createLicenseGateCheck`/
+`createEntitlementGateCheck`/`createRiskGateCheck`/
+`createIntegrationAvailabilityGateCheck`, assembled in the locked order
+by `buildStandardGateChecks()` (`execution-gate.ts`) — backed by the real
+`UsersRepository`/`LicenseService` from Section 03, a pre-computed risk
+result the caller supplies (never computed by the check itself — keeps
+`platform` decoupled from `risk-engine`), and a duck-typed
+`{ isAvailable(): Promise<boolean> }` target (never a direct
+`@sport-os/agents` import, which would be circular). See
+[`RISK_EXECUTION.md`](./RISK_EXECUTION.md).
 
 ## Telegram Foundation
 
@@ -188,6 +195,52 @@ artifacts, evaluation metrics) — not decisions. See
 Agent decision/ticket/value-selection/publishing logic, bookmaker
 execution, or SportyBet automation was built — Section 07's job.
 
+## Decision / Value / Ticket / Risk / Execution Boundary (Section 07)
+
+`@sport-os/football-engine`'s `decision.ts` (Value Engine + Decision
+Engine) and new `market-mapping.ts`/`ticket-engine.ts`, plus
+`@sport-os/market-engine`'s extended `types.ts`,
+`@sport-os/risk-engine`'s new `ticket-risk-engine.ts`, and
+`@sport-os/platform`'s extended `execution-gate.ts`, are all real, built
+on top of the Football Intelligence Boundary above:
+
+- **Market Engine** — canonical `MarketType` (12 locked football
+  markets), `MarketObservation`, fair-odds/implied-probability/overround
+  math, `checkOddsValidity()` (`market-engine/types.ts`).
+- **Probability → Market mapping** — `market-mapping.ts` (lives in
+  `football-engine`, not `market-engine`, to avoid a circular package
+  dependency), deterministic, `MARKET_UNSUPPORTED` for the 7 markets
+  today's Monte Carlo output can't derive.
+- **Value Engine** — `evaluateValue()` (`decision.ts`): fair odds, edge,
+  expected value, odds-validity gating, structured `DecisionReasonCode`s,
+  the closed `DecisionOutcome` set.
+- **Ticket Engine** — `createTicketDraft()`/`transitionTicketStatus()`/
+  `validateTicket()` (`ticket-engine.ts`): SINGLE/ACCUMULATOR, immutable
+  versioning, deterministic validation.
+- **Risk Engine (ticket-level + Aviator daily)** — `evaluateTicketRisk()`/
+  `evaluateAviatorDailyRisk()` (`ticket-risk-engine.ts`), extending
+  Section 01's `RiskService`/`RiskAssessment` contract additively; reads
+  the SHARED `GlobalDailyRiskController`, never a second ledger.
+- **Global Execution Gate's real checks** — see "Global Execution Gate"
+  above.
+- **Execution contract** — `@sport-os/agents/execution-integration.ts`
+  extended with `ExecutionResultStatus`, `validate()`/`status()`; still
+  exactly one implementation (`NotImplementedExecutionIntegration`), so
+  every execution request in this codebase terminates at
+  `NOT_AVAILABLE`/`MANUAL_REQUIRED` — no authorized bookmaker integration
+  exists.
+- **Persistence** — 8 new tables (`market_observations`/
+  `value_evaluations`/`decisions`/`tickets`/`ticket_status_history`/
+  `ticket_legs`/`risk_evaluations`/`execution_requests`/
+  `execution_results`), admin-only RLS, `service_role` write-only — same
+  pattern as every prior section's operational tables.
+
+This boundary owns *decisions, tickets, risk evaluation, and execution
+authorization* — not settlement (Section 08) and not Telegram publishing
+(Section 10). See [`DECISION_ARCHITECTURE.md`](./DECISION_ARCHITECTURE.md),
+[`VALUE_ENGINE.md`](./VALUE_ENGINE.md), [`TICKET_ENGINE.md`](./TICKET_ENGINE.md),
+and [`RISK_EXECUTION.md`](./RISK_EXECUTION.md) for the full design.
+
 ## Football Settlement Boundary
 
 `Ticket`/`TicketSelection`/`MatchResult`/`Settlement` types, and the
@@ -199,16 +252,17 @@ the other automatically.
 
 ## What's explicitly deferred to later sections
 
-- Value-selection policy math itself (`DecisionEngine.assess()`'s real
-  implementation — the Football Decision Agent, Section 06, calls it but
-  doesn't implement it), stake sizing, final risk authorization beyond
-  consulting the shared `GlobalDailyRiskController`/`GlobalExecutionGate`,
-  bookmaker execution, SportyBet automation — deferred to Section 07; the
-  full intelligence layer feeding it (Section 05) and the agent
-  orchestration layer requesting it (Section 06) are now real, see
-  "Football Intelligence Boundary" and "Agent Framework (Section 06)"
-  above. All model/statistical/ML computation for Aviator (aviator-engine
-  — no section assigned yet).
+- Value-selection policy math (`DecisionEngine.assess()`), ticket-level
+  and Aviator-daily risk evaluation, and `GlobalExecutionGate`'s real
+  identity/license/entitlement/risk/integration-availability checks are
+  now **real** — see "Decision / Value / Ticket / Risk / Execution
+  Boundary (Section 07)" above. Still deferred: stake sizing beyond
+  `authorizeTicketStake()`'s "the caller supplies a real number, this
+  module never invents one," a real bookmaker/exchange integration (the
+  typed `ExecutionIntegration` boundary exists; its only implementation
+  reports itself unavailable), SportyBet automation, and settlement
+  calculation (Section 08). All model/statistical/ML computation for
+  Aviator (`aviator-engine` — no section assigned yet).
 - Real provider integrations (football data, odds — the adapter contract
   and pipeline are real as of Section 04, but no live credential exists;
   see `FOOTBALL_DATA_ARCHITECTURE.md`; Aviator data — untouched).
@@ -216,14 +270,13 @@ the other automatically.
   Reporting — Identity and License persistence landed in Section 03;
   these remain open.
 - Real execution (any agent actually placing/confirming a wager) — the
-  typed `ExecutionIntegration` boundary (`@sport-os/agents`, Section 06)
-  both automation agents call has exactly one implementation,
+  typed `ExecutionIntegration` boundary (`@sport-os/agents`, extended
+  Section 07 with `validate()`/`status()`/`ExecutionResultStatus`) both
+  automation agents call has exactly one implementation,
   `NotImplementedExecutionIntegration`, which always reports itself
-  unavailable; a real bookmaker integration is still Section 07+.
+  unavailable; a real, authorized bookmaker/exchange integration remains
+  unbuilt.
 - A concrete `JobScheduler` implementation (contract only today).
-- `GlobalExecutionGate` wired to real identity/license/entitlement
-  checks (the real services now exist — Section 03 — but connecting the
-  gate to them is not this section's job).
 - Direct Supabase Auth / RLS-reachable Mini App requests (today's Mini
   App traffic is entirely service-role-mediated via Edge Functions — see
   `docs/architecture/DATABASE_AND_RLS.md`'s "RLS identity helper").

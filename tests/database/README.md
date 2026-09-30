@@ -1,4 +1,4 @@
-# Database / RLS tests (Section 03 users/licenses; Section 04 football data; Section 05 intelligence metadata; Section 06 agent framework)
+# Database / RLS tests (Section 03 users/licenses; Section 04 football data; Section 05 intelligence metadata; Section 06 agent framework; Section 07 decision/value/ticket/risk/execution)
 
 These validate `supabase/migrations/` directly against a real PostgreSQL
 server — no Supabase CLI, Docker, or PostgREST required. This is
@@ -91,8 +91,34 @@ rigorously via raw SQL without the HTTP layer as a confound.
   CHECK constraint tying `failure_code`/`failure_disposition` presence
   exactly to `status = 'failed'`, and `agent_idempotency_claims`' own
   primary-key uniqueness.
+- `90_section07_fixtures.sql` — Section 07 test data: one full
+  decision/value/ticket/risk/execution pipeline instance atop the
+  existing `f1000000-...-0001` football fixture and Alice
+  (`11111111-...-1111`) — a `market_observations` snapshot, a `BET`
+  `value_evaluations` row, a `DRAFT` ticket with its `ticket_status_history`
+  row and one `ticket_legs` row, an approved `risk_evaluations` row, a
+  `decisions` row tying the value/risk evaluations together, an
+  `execution_requests` row (denied at the gate — `gate_authorized=false`,
+  since no permitted integration exists), and its `NOT_AVAILABLE`
+  `execution_results` row — clearly synthetic ids, never mixed with
+  production data.
+- `100_section07_rls_cases.sql` — decision/value/ticket/risk/execution RLS
+  cases: admin-only read access on every table (matching Section 06's
+  internal-engine-output pattern — none of this is exposed through a Mini
+  App UI yet), the full "no client mutation" surface (not even an admin
+  may write directly), service-role write access (the real repository
+  path), and DB-level integrity constraints: the real UNIQUE constraint
+  enforcing `tickets.idempotency_key` and `execution_requests.
+  idempotency_key` (including proving the latter is global, not scoped
+  per-ticket — a retried key collides even across a different
+  `ticket_or_signal_id`), non-positive stake/odds rejections, an
+  out-of-range probability rejection on both `value_evaluations` and
+  `ticket_legs`, an invalid `execution_results.status` enum value
+  rejection, and `ticket_status_history`'s own `(ticket_id, version)`
+  uniqueness (append-only versioning — a repeated version is rejected, a
+  genuinely new version is accepted).
 - `run.sh` — applies the stubs, every migration in
-  `supabase/migrations/`, all four fixture sets, and all four test
+  `supabase/migrations/`, all five fixture sets, and all five test
   suites, in order, against a scratch database.
 
 ## Running

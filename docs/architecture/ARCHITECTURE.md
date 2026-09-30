@@ -73,11 +73,18 @@ packages/
 ├── platform/              Identity (real, database-backed — Section 03), License (real decision
 │                          rule + real database-backed persistence, Section 03), Roles/Authorization
 │                          (real, Section 03), Owner bootstrap (real, Section 03),
-│                          GlobalExecutionGate (real orchestration), Audit (real, in-memory AND
-│                          real database-backed — Section 03), Health (real), Reporting
-│                          (NotImplemented), Scheduling (contract only)
-├── risk-engine/           GlobalDailyRiskController (real) + sport-agnostic RiskService (NotImplemented)
-├── market-engine/         Odds/market data boundary (NotImplemented)
+│                          GlobalExecutionGate (real orchestration + real identity/license/
+│                          entitlement/risk/integration-availability GateChecks — Section 07),
+│                          Audit (real, in-memory AND real database-backed — Section 03), Health
+│                          (real), Reporting (NotImplemented), Scheduling (contract only)
+├── risk-engine/           GlobalDailyRiskController (real) + sport-agnostic RiskService
+│                          (NotImplemented) + ticket-risk-engine.ts's evaluateTicketRisk()/
+│                          evaluateAviatorDailyRisk() (real, Section 07 — extends RiskAssessment
+│                          additively, reads the shared GlobalDailyRiskController)
+├── market-engine/         Canonical MarketType (12 locked football markets), MarketObservation,
+│                          fair-odds/implied-probability/overround math, checkOddsValidity() are
+│                          real (Section 07 — types.ts). The live-odds-fetching MarketService
+│                          (service.ts) remains NotImplemented (needs a real odds provider)
 ├── football-engine/       Data ingestion/normalization/quality/leakage-protection boundary
 │                          (real, Section 04 — canonical model, provider adapters, quality
 │                          engine, point-in-time query contract; see
@@ -88,10 +95,12 @@ packages/
 │                          calibration, probability consistency, evaluation framework, and the
 │                          prediction output contract are real (Section 05 — see
 │                          docs/architecture/FOOTBALL_INTELLIGENCE.md). decision.ts's
-│                          DecisionEngine (Sport Agent Value Engine logic) remains
-│                          interface-only (Section 07) — NotImplementedDecisionEngine is the
-│                          typed NOT_AVAILABLE stub the Football Decision Agent depends on
-│                          (Section 06)
+│                          DecisionEngine (Value Engine + Decision Engine — StandardDecisionEngine),
+│                          market-mapping.ts (probability→market), and ticket-engine.ts (Ticket
+│                          Engine) are real (Section 07 — see
+│                          docs/architecture/DECISION_ARCHITECTURE.md).
+│                          NotImplementedDecisionEngine remains available for callers that
+│                          haven't wired real ValueEngineDependencies/DecisionPolicy
 ├── aviator-engine/        ingestion, feature-engine, statistical-engine, ml-models, ensemble,
 │                          confidence, risk, performance-tracking — all interface-only, no
 │                          computation. signal-engine.ts's AviatorSignalState
@@ -162,11 +171,14 @@ CALIBRATION                            — real, Section 05
    ↓
 PROBABILITY CONSISTENCY + OUTPUT CONTRACT — real, Section 05 (no ticket/wager decision yet)
    ↓
-DECISION / VALUE ENGINE  →  GlobalExecutionGate  →  Ticket/Signal   — Section 07
+DECISION / VALUE ENGINE  →  TICKET ENGINE  →  RISK ENGINE
+   →  GlobalExecutionGate  →  EXECUTION ADAPTER            — real, Section 07
+   (no authorized bookmaker integration exists — every execution request
+    terminates at NOT_AVAILABLE/MANUAL_REQUIRED; see DECISION_ARCHITECTURE.md)
    ↓
-DISTRIBUTION (Telegram, gated by Publishing Policy Engine)
+DISTRIBUTION (Telegram, gated by Publishing Policy Engine)   — Section 10
    ↓
-SETTLEMENT (against real match results / round outcomes)
+SETTLEMENT (against real match results / round outcomes)     — Section 08
    ↓
 REPORTING / PERFORMANCE (derived only from real settled data)
 ```
@@ -287,7 +299,63 @@ REPORTING / PERFORMANCE (derived only from real settled data)
   fit by a real, tested gradient-descent optimizer against a
   validation-period sample.
 
+## Section 06 boundaries
+
+- `agent-core`/`agents` now have a real agent framework — `BaseAgent`
+  lifecycle, per-invocation state machine, side-effect levels, command/
+  event messages, `AgentOrchestrator` (idempotent dispatch,
+  `ExecutionAuthorizer` enforcement for `EXECUTION`/`REQUESTED_ACTION`-
+  level agents), and all ten specialized agent implementations — see
+  `AGENT_CONTRACTS.md`, `AGENT_SECURITY.md`, `../agents/AGENT_CORE.md`.
+- `aviator-engine`'s Double Bet model (`double-bet.ts`) is real — two
+  independent, concurrent targets, 50/50 by default, no martingale.
+- Still no Value Engine logic, ticket-level/Aviator-daily risk
+  evaluation, real `GlobalExecutionGate` checks, or real bookmaker
+  execution — every agent that would need one of those depended on a
+  typed boundary (`DecisionEngine`/`ExecutionIntegration`) whose only
+  implementation explicitly said "not implemented." Section 07's job.
+
+## Section 07 boundaries
+
+- `football-engine`/`market-engine`/`risk-engine`/`platform` now have a
+  real Decision + Value + Ticket + Risk + Execution-authorization layer —
+  see [`DECISION_ARCHITECTURE.md`](./DECISION_ARCHITECTURE.md),
+  [`VALUE_ENGINE.md`](./VALUE_ENGINE.md),
+  [`TICKET_ENGINE.md`](./TICKET_ENGINE.md), and
+  [`RISK_EXECUTION.md`](./RISK_EXECUTION.md) for the full design.
+  `GlobalExecutionGate` now has real `identity`/`license`/`entitlement`/
+  `risk`/`integration_availability` checks, assembled by
+  `buildStandardGateChecks()` in the locked order.
+- **Probability is still not a decision, value is still not risk
+  authorization, a ticket proposal is still not an executed wager** — see
+  `DECISION_ARCHITECTURE.md`'s "Why the layers can't collapse" for how
+  this holds by construction, and
+  `packages/agents/src/section07-adversarial.test.ts` for the 14 numbered
+  adversarial proofs.
+- No real bookmaker/exchange integration exists — `ExecutionIntegration`
+  still has exactly one implementation
+  (`NotImplementedExecutionIntegration`), so every execution request this
+  codebase can produce terminates at `NOT_AVAILABLE`/`MANUAL_REQUIRED`,
+  never a fabricated `EXECUTED` result.
+- No settlement logic (`WON`/`LOST` determination, payout calculation),
+  no weekly reporting beyond what Section 06 already built, no Telegram
+  publishing infrastructure, no Mini App UI, no new agent framework or
+  licensing system — `TicketStatus` stops at `EXECUTED`/`REJECTED`/
+  `CANCELLED`; Section 08 and Section 10 remain untouched.
+- 10 new migrations
+  (`market_observations`/`value_evaluations`/`decisions`/`tickets`/
+  `ticket_status_history`/`ticket_legs`/`risk_evaluations`/
+  `execution_requests`/`execution_results` + their enums/RLS policies),
+  admin-only RLS, `service_role` write-only — no existing RLS policy from
+  any prior section was weakened. See `tests/database/
+  100_section07_rls_cases.sql` (36 tests, validated against real
+  PostgreSQL).
+
 See also:
+- [`DECISION_ARCHITECTURE.md`](./DECISION_ARCHITECTURE.md)
+- [`VALUE_ENGINE.md`](./VALUE_ENGINE.md)
+- [`TICKET_ENGINE.md`](./TICKET_ENGINE.md)
+- [`RISK_EXECUTION.md`](./RISK_EXECUTION.md)
 - [`FOOTBALL_INTELLIGENCE.md`](./FOOTBALL_INTELLIGENCE.md)
 - [`MODEL_VALIDATION.md`](./MODEL_VALIDATION.md)
 - [`FOOTBALL_DATA_ARCHITECTURE.md`](./FOOTBALL_DATA_ARCHITECTURE.md)
@@ -299,5 +367,7 @@ See also:
 - [`DATABASE_AND_RLS.md`](./DATABASE_AND_RLS.md)
 - [`LICENSING.md`](./LICENSING.md)
 - [`AUTHORIZATION.md`](./AUTHORIZATION.md)
+- [`AGENT_CONTRACTS.md`](./AGENT_CONTRACTS.md)
+- [`AGENT_SECURITY.md`](./AGENT_SECURITY.md)
 - [`../data/DATA_LEAKAGE_PRINCIPLE.md`](../data/DATA_LEAKAGE_PRINCIPLE.md)
 - [`../agents/AGENT_CORE.md`](../agents/AGENT_CORE.md)

@@ -27,5 +27,7 @@ export * from "./ensemble.js";
 export * from "./calibration.js";
 export * from "./evaluation/index.js";
 export * from "./output-contract.js";
+export * from "./market-mapping.js";
 export * from "./decision.js";
+export * from "./ticket-engine.js";
 export * from "./service.js";

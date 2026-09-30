@@ -262,12 +262,55 @@ Contrast with Aviator: `DoubleBetRecord` (added Section 06,
 self-contained (stake × actual exit multiplier) and never depended on a
 missing field. **Next decision point:** before any real football-side
 P&L/ROI/drawdown reporting can exist, `Settlement` (or a new, related
-type) needs a real payout amount field — a Section 07/08 concern, since
-it requires deciding how a partial-leg accumulator payout is computed
-(a genuine "settlement calculation," explicitly out of Section 06's
-scope).
+type) needs a real payout amount field — a Section 08 concern (Section 07
+deliberately did not add one — settlement calculation, including how a
+partial-leg accumulator payout is computed, is explicitly out of its
+scope too; see `TICKET_ENGINE.md`'s "Section 08 boundary").
 
-## 19. Agent workflow persistence beyond a single invocation
+## 19. No real bookmaker/exchange integration exists — relates to question #2
+
+Section 07 built the full typed execution boundary
+(`ExecutionIntegration`, extended with `validate()`/`status()`/
+`ExecutionResultStatus`), `GlobalExecutionGate`'s real
+identity/license/entitlement/risk/integration-availability checks, and
+the `execution_requests`/`execution_results` schema — everything an agent
+would need to request and audit a real execution. But no authorized
+integration was connected (per the spec's explicit stop condition: "if a
+real bookmaker/exchange integration is required but not available, do not
+invent one"), so `NotImplementedExecutionIntegration` remains the only
+implementation and every execution request in this codebase terminates
+at `NOT_AVAILABLE`/`MANUAL_REQUIRED`. This is the concrete, current
+answer to question #2's "what are the real SportyBet integration modes"
+for `manual`: there's no code difference yet between "manual because the
+product says so" and "manual because nothing else is possible" — both
+paths behave identically today. **Next decision point:** once a specific,
+authorized bookmaker/exchange partnership exists (API access, terms of
+service permitting programmatic wagering), implement a real
+`ExecutionIntegration` against it — this is the one piece of Section 07's
+design that cannot be completed without an external, real-world
+dependency no amount of further architecture work can substitute for.
+
+## 20. Correlated/joint accumulator probability — only independence-assumption exists
+
+`computeCombinedProbability()` (`ticket-engine.ts`) implements exactly one
+method: the product of leg probabilities under an explicit independence
+assumption, always tagged `method: "independence_assumption"` and
+versioned. `TicketRiskLegInput.correlationGroup`
+(`ticket-risk-engine.ts`) is a structured field reserved for a future
+correlated-exposure control, but nothing reads it — no correlated/joint
+probability model, and no correlation-aware risk check, exists anywhere
+in this codebase, because no validated method for computing one was
+available to this section. **Consequence:** an accumulator whose legs are
+genuinely correlated (e.g. two markets on the same match) has its
+combined probability computed as if they were independent — a documented
+approximation, not a hidden one, but still a real accuracy gap for
+multi-leg tickets that share a fixture or a competition. **Next decision
+point:** if/when a validated correlation model exists (or a product
+decision to restrict accumulators to independent fixtures is made
+instead), extend `computeCombinedProbability()`/`evaluateTicketRisk()` to
+use it — informed by that real model, not invented speculatively now.
+
+## 21. Agent workflow persistence beyond a single invocation
 
 Section 06's `AgentInvocationRecord`/`InvocationStatus` track ONE
 invocation's lifecycle (IDLE → RUNNING → COMPLETED/FAILED, with a
