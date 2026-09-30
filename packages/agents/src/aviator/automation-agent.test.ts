@@ -1,7 +1,8 @@
 import { AviatorSignalState, type AviatorSignal } from "@sport-os/aviator-engine";
 import { RiskControllerState } from "@sport-os/risk-engine";
 import { describe, expect, it } from "vitest";
-import type { ExecutionIntegration, ExecutionIntegrationRequest, ExecutionIntegrationResult } from "../execution-integration.js";
+import type { ExecutionIntegration, ExecutionIntegrationRequest, ExecutionIntegrationResult, ExecutionValidationResult } from "../execution-integration.js";
+import { ExecutionResultStatus } from "../execution-integration.js";
 import type { AviatorRiskDecision } from "./risk-agent.js";
 import { AviatorAutomationAgent, AviatorAutomationOutcome, AviatorExecutionMode } from "./automation-agent.js";
 
@@ -23,9 +24,15 @@ class RecordingIntegration implements ExecutionIntegration {
   async isAvailable(): Promise<boolean> {
     return this.available;
   }
+  async validate(_request: ExecutionIntegrationRequest): Promise<ExecutionValidationResult> {
+    return this.available ? { valid: true } : { valid: false, status: ExecutionResultStatus.NOT_AVAILABLE, reason: "Integration unavailable." };
+  }
   async execute(request: ExecutionIntegrationRequest): Promise<ExecutionIntegrationResult> {
     this.calls.push(request);
-    return { externalReference: "ext-1", stake: request.stake, executedAt: new Date().toISOString() };
+    return { externalReference: "ext-1", stake: request.stake, executedAt: new Date().toISOString(), status: ExecutionResultStatus.EXECUTED };
+  }
+  async status(_externalReference: string): Promise<ExecutionResultStatus> {
+    return ExecutionResultStatus.EXECUTED;
   }
 }
 

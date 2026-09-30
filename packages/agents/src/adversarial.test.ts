@@ -13,7 +13,7 @@ import { FOOTBALL_DECISION_AGENT_DECLARATION, FootballDecisionAgent } from "./fo
 import { FOOTBALL_INTELLIGENCE_AGENT_DECLARATION, FootballIntelligenceAgent } from "./football/intelligence-agent.js";
 import { AviatorAutomationAgent, AviatorAutomationOutcome, AviatorExecutionMode } from "./aviator/automation-agent.js";
 import { AVIATOR_RISK_AGENT_DECLARATION, type AviatorRiskDecision } from "./aviator/risk-agent.js";
-import { NotImplementedExecutionIntegration } from "./execution-integration.js";
+import { ExecutionResultStatus, NotImplementedExecutionIntegration } from "./execution-integration.js";
 import { SettlementAgent } from "./football/settlement-agent.js";
 import { TELEGRAM_CHANNEL_AGENT_DECLARATION, TelegramChannelManagementAgent } from "./telegram-channel-agent.js";
 
@@ -147,14 +147,19 @@ describe("§33 Adversarial tests", () => {
   it("6. Duplicate execution command -> idempotent rejection/no duplicate (the automation agent runs exactly once)", async () => {
     const orchestrator = newHarness(new GlobalExecutionGate([]));
     let executions = 0;
-    const integration = { isAvailable: async () => true, execute: async (req: { stake: number }) => ({ externalReference: "x", stake: req.stake, executedAt: new Date().toISOString() }) };
+    const integration = {
+      isAvailable: async () => true,
+      execute: async (req: { stake: number }) => ({ externalReference: "x", stake: req.stake, executedAt: new Date().toISOString(), status: ExecutionResultStatus.EXECUTED }),
+    };
     const agent = new FootballAutomationAgent({
       integration: {
         isAvailable: integration.isAvailable,
+        validate: async () => ({ valid: true }),
         execute: async (req) => {
           executions += 1;
           return integration.execute(req);
         },
+        status: async () => ExecutionResultStatus.EXECUTED,
       },
     });
     agent.markReady();
