@@ -248,27 +248,101 @@ critical rule — **an accumulator is one ticket regardless of selection
 count** — are real and tested (`packages/settlement-engine/src/rules.ts`,
 `rules.test.ts`). `PublishedPrediction` and `ExecutedWager` are
 structurally distinct types; nothing in this codebase converts one into
-the other automatically.
+the other automatically. Real market-grading settlement, financial
+accounting, and performance aggregation now exist on top of this — see
+"Settlement, Financial Accounting, Performance & Backtesting Boundary
+(Section 08)" below.
+
+## Settlement, Financial Accounting, Performance & Backtesting Boundary (Section 08)
+
+`@sport-os/settlement-engine`'s new `financial.ts`/`performance.ts`/
+`revisions.ts`, `@sport-os/football-engine`'s new `settlement.ts`/
+`backtest.ts`, and `@sport-os/aviator-engine`'s new `settlement.ts` are
+all real, built on top of the Decision/Value/Ticket/Risk/Execution
+Boundary above:
+
+- **Financial primitives** — `Money`, `PayoutSource` (PROVIDER vs
+  CALCULATED), `LedgerMode` (PAPER vs LIVE), `SettlementRevision`
+  (`settlement-engine/types.ts`); currency-safe arithmetic, net P&L, ROI
+  (`financial.ts`); append-only correction chain
+  (`revisions.ts`) — all sport-agnostic, since `settlement-engine` has
+  zero cross-domain dependencies and both `football-engine` and
+  `aviator-engine` now depend on it (a new, one-directional dependency
+  added this section; confirmed no cycles).
+- **Football market settlement** — `settleMarket()`/`settleLeg()`/
+  `settleTicketLegs()`/`settleTicket()` (`football-engine/settlement.ts`):
+  deterministic grading for 1X2, Double Chance, BTTS, Over/Under, Correct
+  Score, European Handicap, supported-line Asian Handicap, 1H/2H; the
+  §13 accumulator aggregation policy (`FOOTBALL_SETTLEMENT_POLICY_VERSION`).
+- **Backtesting/walk-forward integration** — `simulateBacktestDecision()`
+  (`football-engine/backtest.ts`): reuses the SAME `evaluateValue()`/
+  `createTicketDraft()`/`settleTicketLegs()` a live decision uses, adds
+  only the `BACKTEST_FUTURE_ODDS` leakage guard and grading against a
+  `TrainingExample`'s own historical label; always `LedgerMode.PAPER`.
+  Never rebuilds Section 05's walk-forward/feature/model logic.
+- **Aviator + Double Bet settlement** — `settleDoubleBet()`
+  (`aviator-engine/settlement.ts`): labels Section 06's already-real
+  `combineDoubleBetLegs()` arithmetic with the shared `SettlementStatus`
+  state machine; recomputes no stake/exit/return math.
+- **Performance ledger** — `buildPerformanceLedgerEntry()`
+  (`settlement-engine/performance.ts`): the one, sport-agnostic
+  aggregation algorithm every ledger entry (football, Aviator, backtest)
+  goes through, via a thin `toPerformanceRecordInput()` adapter per
+  domain. Drawdown/losing-streak math also lives here, shared by
+  `PerformanceAgent` (which no longer keeps a private copy).
+- **Realized P&L → risk feedback** — `recordRealizedResult()`
+  (`agents/risk-recording.ts`): the one place a settled `netPnl` is fed
+  into the SHARED `GlobalDailyRiskController`; deliberately standalone,
+  never bundled into a read-only agent's `execute()`.
+- **Settlement/Performance agent extension** — `SettlementAgent`'s new
+  `richTicket` path calls `settleTicket()` directly (§38's "must NOT
+  duplicate settlement mathematics"); `PerformanceAgent`'s new
+  `footballSettlements`/`doubleBetSettlements` inputs feed the shared
+  aggregator (§39's "must NOT alter settlement outcomes... must NOT
+  fabricate missing financial values"). Both legacy Section 06 contracts
+  remain 100% backward compatible.
+- **Persistence** — 6 new tables (`settlements`/`settlement_legs`/
+  `settlement_revisions`/`performance_ledger`/`backtest_runs`/
+  `backtest_results`), admin-only RLS, `service_role` write-only, real
+  idempotency `UNIQUE` constraints — same pattern as every prior
+  section's operational tables. `backtest_runs` references Section 05's
+  `intelligence_training_runs`/`intelligence_evaluation_runs` by FK
+  rather than duplicating window/model/dataset columns.
+
+This boundary owns *settlement, financial accounting, performance
+reporting, and backtesting simulation* — never Telegram publishing
+(Section 10) and never weekly/operational reporting (Section 11). See
+[`SETTLEMENT_ARCHITECTURE.md`](./SETTLEMENT_ARCHITECTURE.md),
+[`FINANCIAL_ACCOUNTING.md`](./FINANCIAL_ACCOUNTING.md),
+[`PERFORMANCE_ARCHITECTURE.md`](./PERFORMANCE_ARCHITECTURE.md), and
+[`BACKTESTING_ARCHITECTURE.md`](./BACKTESTING_ARCHITECTURE.md) for the
+full design.
 
 ## What's explicitly deferred to later sections
 
 - Value-selection policy math (`DecisionEngine.assess()`), ticket-level
-  and Aviator-daily risk evaluation, and `GlobalExecutionGate`'s real
-  identity/license/entitlement/risk/integration-availability checks are
-  now **real** — see "Decision / Value / Ticket / Risk / Execution
-  Boundary (Section 07)" above. Still deferred: stake sizing beyond
-  `authorizeTicketStake()`'s "the caller supplies a real number, this
-  module never invents one," a real bookmaker/exchange integration (the
-  typed `ExecutionIntegration` boundary exists; its only implementation
-  reports itself unavailable), SportyBet automation, and settlement
-  calculation (Section 08). All model/statistical/ML computation for
-  Aviator (`aviator-engine` — no section assigned yet).
+  and Aviator-daily risk evaluation, `GlobalExecutionGate`'s real
+  identity/license/entitlement/risk/integration-availability checks, and
+  settlement/financial-accounting/performance/backtesting calculation are
+  all now **real** — see "Decision / Value / Ticket / Risk / Execution
+  Boundary (Section 07)" and "Settlement, Financial Accounting,
+  Performance & Backtesting Boundary (Section 08)" above. Still deferred:
+  stake sizing beyond `authorizeTicketStake()`'s "the caller supplies a
+  real number, this module never invents one," a real bookmaker/exchange
+  integration (the typed `ExecutionIntegration` boundary exists; its only
+  implementation reports itself unavailable — so every Section 08
+  settlement's `actualPayout`/`actualStake` remains `null` in practice
+  until one exists), SportyBet automation, an FX conversion layer
+  (multi-currency amounts stay strictly separated, never summed), and
+  Telegram publishing / weekly reporting of settlement results (Sections
+  10/11). All model/statistical/ML computation for Aviator (`aviator-
+  engine` — no section assigned yet).
 - Real provider integrations (football data, odds — the adapter contract
   and pipeline are real as of Section 04, but no live credential exists;
   see `FOOTBALL_DATA_ARCHITECTURE.md`; Aviator data — untouched).
-- Persistence for Telegram destinations, Ticket publication, Settlement,
-  Reporting — Identity and License persistence landed in Section 03;
-  these remain open.
+- Persistence for Telegram destinations, Ticket publication, Reporting —
+  Identity and License persistence landed in Section 03; Settlement
+  persistence landed in Section 08; these remain open.
 - Real execution (any agent actually placing/confirming a wager) — the
   typed `ExecutionIntegration` boundary (`@sport-os/agents`, extended
   Section 07 with `validate()`/`status()`/`ExecutionResultStatus`) both

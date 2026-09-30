@@ -117,8 +117,41 @@ rigorously via raw SQL without the HTTP layer as a confound.
   rejection, and `ticket_status_history`'s own `(ticket_id, version)`
   uniqueness (append-only versioning — a repeated version is rejected, a
   genuinely new version is accepted).
+- `110_section08_fixtures.sql` — Section 08 test data: one full
+  settlement/performance/backtesting pipeline instance atop the existing
+  Section 07 fixture ticket (`13000000-...-0001`, v1) and football fixture
+  (`f1000000-...-0001`) — a `match_results` row (2-1, the real result the
+  settlement resolves against), a `WON` `settlements` row (LIVE ledger
+  mode, actual stake/payout both PROVIDER-sourced, a real computed
+  `net_pnl`/`roi`), its `settlement_legs` row (pointing at the exact
+  `match_results` version used), a `settlement_revisions` row (the
+  PENDING→WON correction that produced it, with its own idempotency key),
+  a `performance_ledger` row (one settled/executed ticket rolled up), and
+  a `backtest_runs`/`backtest_results` pair (no training/evaluation run
+  attached — those FKs are nullable) — clearly synthetic ids, never mixed
+  with production data.
+- `120_section08_rls_cases.sql` — settlement/performance/backtesting RLS
+  cases: admin-only read access on all six new tables (matching every
+  prior section's internal-engine-output pattern — nothing here is
+  exposed through a Mini App UI yet), the full "no client mutation"
+  surface (not even an admin may write directly — only `service_role`,
+  the real repository path), and DB-level integrity constraints: the
+  idempotent-settlement UNIQUE constraint on `(ticket_id, ticket_version,
+  settlement_policy_version)` (and confirmation a DIFFERENT policy version
+  for the same ticket is allowed — the scoping is real, not overbroad),
+  the CHECK tying `actual_payout` to `payout_source = 'PROVIDER'` (a
+  CALCULATED figure can never masquerade as actual), the money
+  amount/currency pairing CHECK, `settlement_legs`' CHECK requiring a
+  `result_version_id` on any non-PENDING status, `settlement_revisions`'
+  own `idempotency_key` UNIQUE constraint (while proving multiple
+  genuinely different revisions for the same original settlement are both
+  allowed — corrections are append-only, never destructive),
+  `performance_ledger`'s nine-dimension UNIQUE index plus a non-negative
+  count CHECK, and `backtest_runs`' `stake_per_ticket > 0` CHECK, ending
+  with a `service_role` insert of a full real `backtest_runs` +
+  `backtest_results` pair (the real backtest pipeline).
 - `run.sh` — applies the stubs, every migration in
-  `supabase/migrations/`, all five fixture sets, and all five test
+  `supabase/migrations/`, all six fixture sets, and all six test
   suites, in order, against a scratch database.
 
 ## Running
