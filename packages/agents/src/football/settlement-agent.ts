@@ -1,34 +1,56 @@
 import { BaseAgent, SideEffectLevel, type AgentDeclaration, type AgentRequest, type AgentResponse } from "@sport-os/agent-core";
-import type { ExecutedWager, MatchResult, Settlement, SettlementService, Ticket } from "@sport-os/settlement-engine";
+import { settleTicket, type FootballExecutionAccounting, type FootballResultSnapshot, type TicketRecord, type TicketSettlement } from "@sport-os/football-engine";
+import { LedgerMode, type ExecutedWager, type MatchResult, type Settlement, type SettlementService, type Ticket } from "@sport-os/settlement-engine";
+import { ValidationError, type UUID } from "@sport-os/shared";
 
 /**
- * Settlement Agent (Section 06 §12). Thin orchestration over
- * `@sport-os/settlement-engine`'s `SettlementService` — this agent
- * computes NO settlement math itself (leg/ticket outcome determination
- * is `SettlementService.settle()`'s job, a later-section concern that is
- * `NotImplementedSettlementService` today; §38 explicitly excludes
- * "settlement calculations beyond the agent contract boundary" from
- * Section 06). What this agent DOES own: never mutating the original
+ * Settlement Agent (Section 06 §12, extended Section 08 §38). Thin
+ * orchestration — REQUEST → Settlement Engine → Settlement Result — this
+ * agent computes NO settlement math itself in either path below.
+ *
+ * Two input shapes, both real:
+ * - LEGACY (`ticket`/`executedWager`/`officialResult`, Section 06):
+ *   delegates to the injected `SettlementService` — still exactly the
+ *   same contract, unchanged; `NotImplementedSettlementService` remains
+ *   the default for any caller that hasn't migrated.
+ * - REAL (`richTicket`, Section 08): calls `@sport-os/football-engine`'s
+ *   real `settleTicket()` directly — the actual market-grading + §13
+ *   accumulator-aggregation + §17 financial-accounting engine, never
+ *   duplicated here. `richTicket` takes precedence when both are
+ *   supplied.
+ *
+ * What this agent DOES own either way: never mutating the original
  * ticket/prediction it receives, and packaging the result as a typed
- * output rather than a bare `Settlement` value with no provenance.
+ * output (`richSettlement`, directly consumable by
+ * `@sport-os/football-engine`'s `toPerformanceRecordInput()` /
+ * `@sport-os/settlement-engine`'s `buildPerformanceLedgerEntry()` — the
+ * "→ Performance Ledger" half of §38's flow) rather than a bare
+ * `Settlement` value with no provenance.
  *
  * "A 5-leg accumulator that loses is 1 LOST TICKET, not 5 LOST TICKETS"
- * — enforced upstream by `settlement-engine/rules.ts`'s `countTickets`/
- * `isAccumulator`, unchanged by this agent (it settles exactly the one
- * `Ticket` it's given, however many legs it holds).
+ * — enforced upstream, unchanged by this agent (it settles exactly the
+ * one ticket it's given, however many legs it holds).
  */
 
 export interface SettlementAgentInput {
-  readonly ticket: Ticket;
-  readonly executedWager: ExecutedWager;
-  /** The official result the caller resolved for this ticket — this agent does not fetch it itself (see module doc comment). */
-  readonly officialResult: MatchResult;
+  /** Legacy path (Section 06) — required together with `officialResult` when `richTicket` is absent. */
+  readonly ticket?: Ticket;
+  readonly executedWager?: ExecutedWager;
+  readonly officialResult?: MatchResult;
+
+  /** Section 08 real path — takes precedence over the legacy fields when present. */
+  readonly richTicket?: TicketRecord;
+  readonly footballResults?: ReadonlyMap<UUID, FootballResultSnapshot>;
+  readonly execution?: FootballExecutionAccounting;
+  readonly ledgerMode?: LedgerMode;
 }
 
 export interface SettlementAgentResult {
   readonly settlement: Settlement;
-  /** Passed through byte-for-byte from the input — proof (checked by this agent's tests) that settling never rewrites the original ticket. */
-  readonly originalTicket: Ticket;
+  /** Passed through byte-for-byte from the input's legacy `ticket` — proof (checked by this agent's tests) that settling never rewrites the original ticket. `undefined` on the Section 08 real path (there is no legacy `Ticket` to echo). */
+  readonly originalTicket: Ticket | undefined;
+  /** The full Section 08 settlement record (per-leg detail, financial accounting) — `undefined` on the legacy path. */
+  readonly richSettlement: TicketSettlement | undefined;
 }
 
 export interface SettlementAgentDependencies {
@@ -61,6 +83,25 @@ export class SettlementAgent extends BaseAgent<SettlementAgentInput, SettlementA
 
   async execute(request: AgentRequest<SettlementAgentInput>): Promise<AgentResponse<SettlementAgentResult>> {
     const { input } = request;
+
+    if (input.richTicket) {
+      const richSettlement = settleTicket({
+        ticket: input.richTicket,
+        results: input.footballResults ?? new Map(),
+        execution: input.execution,
+        ledgerMode: input.ledgerMode ?? LedgerMode.LIVE,
+        source: this.agentId,
+        correlationId: request.requestId,
+        now: new Date().toISOString(),
+      });
+      const settlement: Settlement = { settlementId: richSettlement.settlementId, ticketId: richSettlement.ticketId, status: richSettlement.status, settledAt: richSettlement.settledAt };
+      return { requestId: request.requestId, output: { settlement, originalTicket: undefined, richSettlement }, completedAt: new Date().toISOString() };
+    }
+
+    if (!input.ticket || !input.officialResult) {
+      throw new ValidationError({ message: "SettlementAgent requires either richTicket (Section 08) or ticket + officialResult (legacy).", code: "SETTLEMENT_AGENT_MISSING_INPUT" });
+    }
+
     // A defensive, structural copy — even though nothing below mutates
     // `input.ticket`, this guarantees it by construction rather than by
     // convention: `originalTicket` in the response can never alias
@@ -69,6 +110,6 @@ export class SettlementAgent extends BaseAgent<SettlementAgentInput, SettlementA
 
     const settlement = await this.deps.settlementService.settle(input.ticket.ticketId, input.officialResult);
 
-    return { requestId: request.requestId, output: { settlement, originalTicket }, completedAt: new Date().toISOString() };
+    return { requestId: request.requestId, output: { settlement, originalTicket, richSettlement: undefined }, completedAt: new Date().toISOString() };
   }
 }

@@ -30,4 +30,6 @@ export * from "./output-contract.js";
 export * from "./market-mapping.js";
 export * from "./decision.js";
 export * from "./ticket-engine.js";
+export * from "./settlement.js";
+export * from "./backtest.js";
 export * from "./service.js";

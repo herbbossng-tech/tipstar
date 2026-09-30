@@ -1,27 +1,41 @@
 import { BaseAgent, SideEffectLevel, type AgentDeclaration, type AgentRequest, type AgentResponse } from "@sport-os/agent-core";
-import type { DoubleBetRecord } from "@sport-os/aviator-engine";
+import { toPerformanceRecordInput as aviatorToPerformanceRecordInput, type DoubleBetRecord, type DoubleBetSettlement } from "@sport-os/aviator-engine";
+import { toPerformanceRecordInput as footballToPerformanceRecordInput, type TicketSettlement } from "@sport-os/football-engine";
 import { Entitlement } from "@sport-os/platform";
 import type { ISODateString } from "@sport-os/shared";
+import { buildPerformanceLedgerEntry, computeLongestLosingStreak, computeMaxDrawdown, LedgerMode, type PerformanceLedgerEntry } from "@sport-os/settlement-engine";
 
 /**
- * Performance Agent (Section 06 §4/30). Cross-sport, read-only
- * aggregation over already-settled records — "consume historical
- * results, calculate performance analytics, never rewrite historical
- * outcomes." Unlike the Weekly Report Agent's football-side gap (no
- * stake/return amount exists anywhere in `@sport-os/settlement-engine`
- * yet), `DoubleBetRecord` genuinely DOES carry real `totalStake`/
- * `totalReturn`/`netPnl`/`roi` once both legs settle — so this agent's
- * Aviator-side P&L figures are real numbers, not `undefined`
- * placeholders, whenever settled records are supplied. Only SETTLED
- * records (both legs resolved, `totalReturn !== undefined`) contribute
- * to the aggregate; still-open double bets are counted but excluded
- * from the money math, never treated as a zero outcome.
+ * Performance Agent (Section 06 §4/30, extended Section 08 §39). Cross-
+ * sport, read-only aggregation over already-settled records — "consume
+ * historical results, calculate performance analytics, never rewrite
+ * historical outcomes; never alter settlement outcomes; never fabricate
+ * missing financial values." Unlike the Weekly Report Agent's football-
+ * side gap (no stake/return amount existed anywhere before Section 08),
+ * `DoubleBetRecord` genuinely DOES carry real `totalStake`/`totalReturn`/
+ * `netPnl`/`roi` once both legs settle, and Section 08's real
+ * `TicketSettlement` now does too — so both this agent's Aviator AND
+ * football figures are real numbers, not `undefined` placeholders,
+ * whenever settled records are supplied. Only SETTLED records contribute
+ * to the money math; still-pending ones are counted but excluded, never
+ * treated as a zero outcome.
+ *
+ * `computeMaxDrawdown`/`computeLongestLosingStreak` are
+ * `@sport-os/settlement-engine`'s real, shared implementations (moved
+ * there in Section 08 so football and Aviator performance share exactly
+ * ONE algorithm) — this agent no longer keeps its own private copy.
  */
 
 export interface PerformanceAgentInput {
   readonly periodStart: ISODateString;
   readonly periodEnd: ISODateString;
   readonly doubleBets: readonly DoubleBetRecord[];
+  /** Section 08 addition — already-settled Aviator records (`@sport-os/aviator-engine/settlement.ts`'s `settleDoubleBet()` output), when the caller has them. Aggregated the SAME way as `doubleBets` below but through the shared, cross-sport `buildPerformanceLedgerEntry()`. */
+  readonly doubleBetSettlements?: readonly DoubleBetSettlement[];
+  /** Section 08 addition — already-settled football tickets (`@sport-os/football-engine/settlement.ts`'s `settleTicket()` output). */
+  readonly footballSettlements?: readonly TicketSettlement[];
+  /** Which ledger to aggregate football/Aviator settlements into — defaults to LIVE. Never mixes PAPER and LIVE in one entry (§22). */
+  readonly ledgerMode?: LedgerMode;
 }
 
 export interface AviatorPerformanceSummary {
@@ -39,6 +53,10 @@ export interface PerformanceAgentResult {
   readonly periodStart: ISODateString;
   readonly periodEnd: ISODateString;
   readonly aviator: AviatorPerformanceSummary;
+  /** Real cross-sport `PerformanceLedgerEntry` for the supplied `doubleBetSettlements` (§23/§25) — `undefined` when none were supplied, never a fabricated empty entry. */
+  readonly aviatorLedger: PerformanceLedgerEntry | undefined;
+  /** Real `PerformanceLedgerEntry` for the supplied `footballSettlements` — `undefined` when none were supplied. */
+  readonly footballLedger: PerformanceLedgerEntry | undefined;
   readonly generatedAt: ISODateString;
 }
 
@@ -53,35 +71,6 @@ export const PERFORMANCE_AGENT_DECLARATION: AgentDeclaration = {
   dependencies: [],
   sideEffectLevel: SideEffectLevel.ANALYSIS,
 };
-
-/** Chronological equity-curve drawdown: the largest peak-to-trough drop in cumulative P&L, in the ORDER settled records are supplied (callers must pass them in real settlement order — this function does not itself know a real timestamp order to sort by beyond what's given). */
-function computeMaxDrawdown(pnls: readonly number[]): number | null {
-  if (pnls.length === 0) return null;
-  let cumulative = 0;
-  let peak = 0;
-  let maxDrawdown = 0;
-  for (const pnl of pnls) {
-    cumulative += pnl;
-    peak = Math.max(peak, cumulative);
-    maxDrawdown = Math.max(maxDrawdown, peak - cumulative);
-  }
-  return maxDrawdown;
-}
-
-function computeLongestLosingStreak(pnls: readonly number[]): number | null {
-  if (pnls.length === 0) return null;
-  let longest = 0;
-  let current = 0;
-  for (const pnl of pnls) {
-    if (pnl < 0) {
-      current += 1;
-      longest = Math.max(longest, current);
-    } else {
-      current = 0;
-    }
-  }
-  return longest;
-}
 
 export class PerformanceAgent extends BaseAgent<PerformanceAgentInput, PerformanceAgentResult> {
   constructor(agentId: string = PERFORMANCE_AGENT_DECLARATION.agentId) {
@@ -109,7 +98,31 @@ export class PerformanceAgent extends BaseAgent<PerformanceAgentInput, Performan
       longestLosingStreak: computeLongestLosingStreak(pnls),
     };
 
-    const result: PerformanceAgentResult = { periodStart: input.periodStart, periodEnd: input.periodEnd, aviator, generatedAt: new Date().toISOString() };
+    const ledgerMode = input.ledgerMode ?? LedgerMode.LIVE;
+
+    const aviatorLedger =
+      input.doubleBetSettlements && input.doubleBetSettlements.length > 0
+        ? buildPerformanceLedgerEntry({
+            records: input.doubleBetSettlements.map((s) => aviatorToPerformanceRecordInput(s)),
+            periodStart: input.periodStart,
+            periodEnd: input.periodEnd,
+            ledgerMode,
+            sport: "aviator",
+          })
+        : undefined;
+
+    const footballLedger =
+      input.footballSettlements && input.footballSettlements.length > 0
+        ? buildPerformanceLedgerEntry({
+            records: input.footballSettlements.map((s) => footballToPerformanceRecordInput(s)),
+            periodStart: input.periodStart,
+            periodEnd: input.periodEnd,
+            ledgerMode,
+            sport: "football",
+          })
+        : undefined;
+
+    const result: PerformanceAgentResult = { periodStart: input.periodStart, periodEnd: input.periodEnd, aviator, aviatorLedger, footballLedger, generatedAt: new Date().toISOString() };
     return { requestId: request.requestId, output: result, completedAt: new Date().toISOString() };
   }
 }

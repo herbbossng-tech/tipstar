@@ -7,5 +7,6 @@ export * from "./confidence.js";
 export * from "./signal-engine.js";
 export * from "./risk.js";
 export * from "./double-bet.js";
+export * from "./settlement.js";
 export * from "./performance-tracking.js";
 export * from "./service.js";

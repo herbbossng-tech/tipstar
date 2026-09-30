@@ -1,4 +1,5 @@
 export * from "./execution-integration.js";
+export * from "./risk-recording.js";
 export * from "./telegram-channel-agent.js";
 export * from "./performance-agent.js";
 export * from "./football/intelligence-agent.js";

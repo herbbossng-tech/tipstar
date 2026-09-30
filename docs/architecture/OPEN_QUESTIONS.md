@@ -245,27 +245,30 @@ weekly, after each matchday) and whether `@sport-os/platform`'s
 `MODULE_BOUNDARIES.md`'s "What's explicitly deferred") is the right
 place to drive it.
 
-## 18. `@sport-os/settlement-engine` has no stake/payout amount anywhere
+## 18. `@sport-os/settlement-engine` has no stake/payout amount anywhere — RESOLVED (Section 08)
 
 Discovered building Section 06's Weekly Report Agent. `Ticket`/
-`Settlement`/`ExecutedWager` (`packages/settlement-engine/src/types.ts`)
-carry `WON`/`LOST`/`VOID`/`PUSH`/`PENDING`/`CANCELLED` status and a
-stake amount on `ExecutedWager`, but nowhere is there a real *return*/
-*payout* amount for a settled ticket — only the outcome. **Consequence:**
-the Weekly Report Agent's `predictionWinRate` (a real, honest number —
-WON vs LOST counts) is the only thing it can compute; `executedWager
-Performance` is always `undefined` rather than a fabricated P&L/ROI —
-see `docs/architecture/AGENT_CONTRACTS.md`'s Weekly Report Agent entry.
-Contrast with Aviator: `DoubleBetRecord` (added Section 06,
-`aviator-engine/double-bet.ts`) DOES carry real `totalReturn`/`netPnl`/
-`roi` once both legs settle, because its settlement arithmetic is
-self-contained (stake × actual exit multiplier) and never depended on a
-missing field. **Next decision point:** before any real football-side
-P&L/ROI/drawdown reporting can exist, `Settlement` (or a new, related
-type) needs a real payout amount field — a Section 08 concern (Section 07
-deliberately did not add one — settlement calculation, including how a
-partial-leg accumulator payout is computed, is explicitly out of its
-scope too; see `TICKET_ENGINE.md`'s "Section 08 boundary").
+`Settlement`/`ExecutedWager` (`packages/settlement-engine/src/types.ts`,
+the ORIGINAL Section 01 types, unchanged) carry `WON`/`LOST`/`VOID`/
+`PUSH`/`PENDING`/`CANCELLED` status and a stake amount on `ExecutedWager`,
+but nowhere was there a real *return*/*payout* amount for a settled
+ticket — only the outcome. **Resolution:** Section 08 added a parallel,
+richer settlement type — `TicketSettlement`
+(`packages/football-engine/src/settlement.ts`) — that carries real
+`actualStake`/`actualPayout`/`payoutSource`/`calculatedReturn`/`netPnl`/
+`roi` fields, produced by `settleTicket()`'s real market-grading +
+accumulator-aggregation + financial-accounting engine. The original,
+narrower `Settlement` type was left untouched (still used by
+`SettlementAgent`'s legacy Section 06 path) rather than modified in
+place, to avoid breaking any existing caller; `SettlementAgent.execute()`
+now returns both a narrow legacy `Settlement` view and the full
+`richSettlement: TicketSettlement` when settling via the new `richTicket`
+path. See `docs/architecture/SETTLEMENT_ARCHITECTURE.md` and
+`docs/architecture/FINANCIAL_ACCOUNTING.md` for the full design, and
+`docs/architecture/AGENT_CONTRACTS.md`'s Weekly Report Agent entry (still
+accurate for the legacy path — the Weekly Report Agent itself was not
+migrated to the new `TicketSettlement`-based figures this section, since
+that's Section 11's reporting-layer concern, not this section's).
 
 ## 19. No real bookmaker/exchange integration exists — relates to question #2
 
@@ -329,3 +332,53 @@ multi-step workflow exists yet to require one. **Next decision point:**
 if/when Section 07+ needs a durable, resumable multi-invocation workflow
 (rather than the caller re-dispatching), design `agent_workflows` then,
 informed by that real use case rather than a speculative one now.
+
+## 22. No real bookmaker/provider settlement payout format exists — relates to questions #2/#19
+
+Section 08 defined `FootballExecutionAccounting.payout`/`payoutSource`
+and the `PayoutSource.PROVIDER` vs `CALCULATED` distinction precisely so
+a real provider's payout figure has a place to land, but no real
+execution provider is connected (question #19) — so every settlement in
+this codebase today either has `payoutSource: undefined` (unexecuted) or,
+in the one place execution accounting is exercised end to end (tests and
+adversarial scenarios), a caller-supplied synthetic `PROVIDER` value. The
+actual shape a real bookmaker/exchange sends back for a settled wager —
+whether it reports partial-accumulator payouts, how it represents a
+push/void, whether its own accumulator void/push convention matches this
+codebase's own §13 policy — is unknown until a real integration exists.
+**Next decision point:** when a real `ExecutionIntegration` is
+implemented (question #19), verify whether its actual settlement/payout
+webhook or polling shape maps cleanly onto `FootballExecutionAccounting`
+as designed, or needs an adapter layer; do not assume compatibility
+without a real provider to check against.
+
+## 23. No FX conversion layer exists — multi-currency performance stays permanently separated
+
+`@sport-os/settlement-engine/financial.ts`'s `assertSameCurrency()` makes
+every financial aggregation in this codebase currency-safe by refusing
+(never silently converting) a cross-currency combination — see
+`FINANCIAL_ACCOUNTING.md`. This means a deployment operating across
+multiple currencies (e.g. NGN and KES) gets fully separate
+`PerformanceLedgerEntry` rows per currency, with no single combined "total
+P&L across all currencies" figure anywhere. **Next decision point:** if a
+genuine product need for a combined cross-currency view emerges, it
+requires a real, sourced FX rate layer (with its own versioning/audit
+trail, matching this codebase's existing "never silently convert" pattern)
+— explicitly out of Section 08's scope per its own stop condition
+("currency conversion required but no FX layer exists: stop and report").
+
+## 24. Backtest odds provenance depends entirely on the caller
+
+`simulateBacktestDecision()` enforces that `oddsTimestamp <= example.
+snapshotTime` (the `BACKTEST_FUTURE_ODDS` guard), but it has no way to
+verify that the `decisionOdds`/`oddsTimestamp` pair the caller supplies
+actually came from a real historical `market_observations`/
+`odds_observations` snapshot rather than being reconstructed after the
+fact. The type-level contract assumes an honest caller; nothing in
+`backtest.ts` itself queries Section 04's odds history to cross-check.
+**Next decision point:** if a fully-automated backtest runner is built
+(rather than a caller assembling `BacktestDecisionPoint`s by hand), it
+should resolve `decisionOdds`/`oddsTimestamp`/`closingOdds` directly from
+`OddsObservationsRepository`'s own point-in-time queries — never construct
+them any other way — so the leakage guard here has something real to
+check.

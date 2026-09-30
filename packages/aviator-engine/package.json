@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@sport-os/settlement-engine": "*",
     "@sport-os/shared": "*"
   },
   "devDependencies": {

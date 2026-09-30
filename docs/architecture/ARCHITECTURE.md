@@ -65,7 +65,10 @@ packages/
 │                          Management, Aviator Intelligence/Risk/Automation, Performance) and
 │                          their Supabase-backed persistence — real, Section 06. Each delegates
 │                          its actual computation to an already-real Section 01–05 service; see
-│                          docs/architecture/AGENT_CONTRACTS.md
+│                          docs/architecture/AGENT_CONTRACTS.md. SettlementAgent/PerformanceAgent
+│                          now delegate to the real Section 08 settlement/performance engines too;
+│                          risk-recording.ts's recordRealizedResult() (real, Section 08) is the one
+│                          place a settled netPnl feeds the shared GlobalDailyRiskController
 ├── telegram/              initData validation (real HMAC), webhook secret verification,
 │                          destination validation, Publishing Policy Engine (real), Bot API
 │                          client (real), Destination Manager / PublishingService (NotImplemented),
@@ -100,16 +103,30 @@ packages/
 │                          Engine) are real (Section 07 — see
 │                          docs/architecture/DECISION_ARCHITECTURE.md).
 │                          NotImplementedDecisionEngine remains available for callers that
-│                          haven't wired real ValueEngineDependencies/DecisionPolicy
+│                          haven't wired real ValueEngineDependencies/DecisionPolicy.
+│                          settlement.ts (market settlement + accumulator aggregation + financial
+│                          accounting) and backtest.ts (walk-forward settlement simulation, reusing
+│                          Section 05/07 unmodified) are real (Section 08 — see
+│                          docs/architecture/SETTLEMENT_ARCHITECTURE.md and
+│                          docs/architecture/BACKTESTING_ARCHITECTURE.md)
 ├── aviator-engine/        ingestion, feature-engine, statistical-engine, ml-models, ensemble,
 │                          confidence, risk, performance-tracking — all interface-only, no
 │                          computation. signal-engine.ts's AviatorSignalState
 │                          (BUY/SELL/WAIT/NO_TRADE/MONITOR) and double-bet.ts's DoubleBetRecord/
 │                          buildDefaultDoubleBetLegs/settleDoubleBetLeg (the locked, real
-│                          50/50-by-default Double Bet model) are real as of Section 06
-└── settlement-engine/     Ticket/TicketSelection/MatchResult/Settlement types, the
-                           accumulator-is-one-ticket rule (real, tested), TicketService/
-                           SettlementService (NotImplemented)
+│                          50/50-by-default Double Bet model) are real as of Section 06.
+│                          settlement.ts's settleDoubleBet() (labels the existing real Double Bet
+│                          arithmetic with the shared SettlementStatus state machine) is real
+│                          (Section 08)
+└── settlement-engine/     Ticket/TicketSelection/MatchResult/Settlement types (Section 01,
+                           unchanged), the accumulator-is-one-ticket rule (real, tested),
+                           TicketService/SettlementService (NotImplemented). Money/PayoutSource/
+                           LedgerMode/SettlementRevision types, currency-safe financial
+                           arithmetic (financial.ts), the sport-agnostic performance ledger
+                           aggregator (performance.ts), and append-only settlement corrections
+                           (revisions.ts) are real (Section 08 — see
+                           docs/architecture/FINANCIAL_ACCOUNTING.md and
+                           docs/architecture/PERFORMANCE_ARCHITECTURE.md)
 ```
 
 ## Why three packages beyond the eight the blueprint named
@@ -178,9 +195,13 @@ DECISION / VALUE ENGINE  →  TICKET ENGINE  →  RISK ENGINE
    ↓
 DISTRIBUTION (Telegram, gated by Publishing Policy Engine)   — Section 10
    ↓
-SETTLEMENT (against real match results / round outcomes)     — Section 08
+SETTLEMENT (against real match results / round outcomes,     — real, Section 08
+   append-only, versioned corrections)                          (see SETTLEMENT_ARCHITECTURE.md)
    ↓
-REPORTING / PERFORMANCE (derived only from real settled data)
+REPORTING / PERFORMANCE (derived only from real settled data, — real, Section 08
+   actual P&L/ROI/drawdown/losing-streak/CLV; paper/live         (see PERFORMANCE_ARCHITECTURE.md,
+   strictly separated; backtesting reuses the same engine)       FINANCIAL_ACCOUNTING.md,
+                                                                  BACKTESTING_ARCHITECTURE.md)
 ```
 
 ## Security principles (locked)
@@ -351,12 +372,66 @@ REPORTING / PERFORMANCE (derived only from real settled data)
   100_section07_rls_cases.sql` (36 tests, validated against real
   PostgreSQL).
 
+## Section 08 boundaries
+
+- `settlement-engine`/`football-engine`/`aviator-engine`/`agents` now
+  have a real Settlement + Financial Accounting + Performance +
+  Backtesting layer — see
+  [`SETTLEMENT_ARCHITECTURE.md`](./SETTLEMENT_ARCHITECTURE.md),
+  [`FINANCIAL_ACCOUNTING.md`](./FINANCIAL_ACCOUNTING.md),
+  [`PERFORMANCE_ARCHITECTURE.md`](./PERFORMANCE_ARCHITECTURE.md), and
+  [`BACKTESTING_ARCHITECTURE.md`](./BACKTESTING_ARCHITECTURE.md) for the
+  full design.
+- **ANALYTICAL OUTCOME ≠ FINANCIAL OUTCOME, always** — a ticket's
+  `SettlementStatus` (WON/LOST/VOID/PUSH/PENDING/CANCELLED) is always
+  computed from real market data; `actualStake`/`actualPayout`/`netPnl`/
+  `roi` stay `null` unless a real, confirmed execution exists. This holds
+  by construction in `TicketSettlement`'s own fields, not by convention —
+  see `FINANCIAL_ACCOUNTING.md`'s "The central rule."
+  `packages/agents/src/section08-adversarial.test.ts`'s 28 numbered
+  scenarios are the adversarial proof.
+- An accumulator is still exactly ONE ticket at settlement, regardless of
+  leg count (§13/§24) — `settleTicketLegs()` always produces one
+  `TicketLegAggregation`; `buildPerformanceLedgerEntry()` always counts
+  one `ticketCount` entry per settled record, never per leg.
+- Settlement corrections are append-only — no `settlements` row is ever
+  `UPDATE`d; a corrected outcome is always a new `settlement_revisions`
+  row, folded by `resolveCurrentSettlement()` without discarding any
+  prior revision.
+- Backtesting reuses the real live pipeline (`evaluateValue()`,
+  `createTicketDraft()`, `settleTicketLegs()`) end to end — never a
+  second decision/settlement implementation — and is unconditionally
+  `LedgerMode.PAPER`, so it can never write to a LIVE performance ledger.
+- No real bookmaker/exchange integration still exists (unchanged from
+  Section 07 — see question #19 in `OPEN_QUESTIONS.md`), so every
+  settlement's `actualPayout`/`actualStake` in this codebase today is
+  either `null` (unexecuted) or a caller-supplied test value — there is
+  no live path yet by which a real `PROVIDER` payout is ever produced.
+  No FX conversion layer exists either (question #23) — multi-currency
+  performance stays strictly separated, never summed.
+- No Telegram publishing, no weekly report UI, no Mini App dashboard, no
+  new agent framework, no new bookmaker integration, no new licensing
+  architecture — Sections 09/10/11 remain untouched.
+- 6 new migrations (`settlements`/`settlement_legs`/
+  `settlement_revisions`/`performance_ledger`/`backtest_runs`/
+  `backtest_results` + their enums/RLS policies), admin-only RLS,
+  `service_role` write-only — no existing RLS policy from any prior
+  section was weakened. `backtest_runs` references Section 05's
+  `intelligence_training_runs`/`intelligence_evaluation_runs` by FK
+  rather than duplicating lineage columns. See
+  `tests/database/120_section08_rls_cases.sql` (28 tests, validated
+  against real PostgreSQL).
+
 See also:
 - [`DECISION_ARCHITECTURE.md`](./DECISION_ARCHITECTURE.md)
 - [`VALUE_ENGINE.md`](./VALUE_ENGINE.md)
 - [`TICKET_ENGINE.md`](./TICKET_ENGINE.md)
 - [`RISK_EXECUTION.md`](./RISK_EXECUTION.md)
 - [`FOOTBALL_INTELLIGENCE.md`](./FOOTBALL_INTELLIGENCE.md)
+- [`SETTLEMENT_ARCHITECTURE.md`](./SETTLEMENT_ARCHITECTURE.md)
+- [`FINANCIAL_ACCOUNTING.md`](./FINANCIAL_ACCOUNTING.md)
+- [`PERFORMANCE_ARCHITECTURE.md`](./PERFORMANCE_ARCHITECTURE.md)
+- [`BACKTESTING_ARCHITECTURE.md`](./BACKTESTING_ARCHITECTURE.md)
 - [`MODEL_VALIDATION.md`](./MODEL_VALIDATION.md)
 - [`FOOTBALL_DATA_ARCHITECTURE.md`](./FOOTBALL_DATA_ARCHITECTURE.md)
 - [`DATA_QUALITY.md`](./DATA_QUALITY.md)
