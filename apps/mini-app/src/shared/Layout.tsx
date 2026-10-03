@@ -1,9 +1,12 @@
 import type { ReactNode } from "react";
 import { clientConfig } from "../config.js";
+import { useTelegramTheme } from "../telegram/useTelegramTheme.js";
 import { IdentityBadge } from "./IdentityBadge.js";
 import { NavBar } from "./NavBar.js";
 
 export function Layout({ children }: { readonly children: ReactNode }): JSX.Element {
+  useTelegramTheme();
+
   return (
     <div className="app-shell">
       <header className="app-header">

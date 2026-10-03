@@ -71,3 +71,23 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
 
   return payload as T;
 }
+
+/**
+ * Builds a query string from a flat param object, dropping `undefined`/
+ * empty-string values entirely (never sending `?foo=undefined`) — used
+ * by every Section 09 domain API module so query-building logic exists
+ * in exactly one place.
+ */
+export function buildQueryString(params: Readonly<Record<string, string | undefined>>): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== "") search.set(key, value);
+  }
+  const query = search.toString();
+  return query ? `?${query}` : "";
+}
+
+/** Thin convenience wrapper over `apiRequest` for the common case: an authenticated GET with a bearer session token. No component calls `apiRequest`/`fetch` directly for these endpoints — see Section 09's API client rule. */
+export async function authedGet<T>(path: string, sessionToken: string, params: Readonly<Record<string, string | undefined>> = {}): Promise<T> {
+  return apiRequest<T>(`${path}${buildQueryString(params)}`, { method: "GET", headers: { authorization: `Bearer ${sessionToken}` } });
+}

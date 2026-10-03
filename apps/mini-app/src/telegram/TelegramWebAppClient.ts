@@ -18,6 +18,10 @@ export interface TelegramWebAppClient {
   getRawInitData(): string;
   ready(): void;
   expand(): void;
+  /** `undefined` outside Telegram (or on a client too old to report it) — callers must fall back to `prefers-color-scheme`, never assume a value (Section 09 §38). */
+  getColorScheme(): "light" | "dark" | undefined;
+  /** Each field `undefined` unless Telegram actually supplied it — never a guessed/default color asserted as real theme data. */
+  getThemeParams(): TelegramWebAppThemeParams;
 }
 
 class BrowserTelegramWebAppClient implements TelegramWebAppClient {
@@ -41,6 +45,14 @@ class BrowserTelegramWebAppClient implements TelegramWebAppClient {
 
   expand(): void {
     this.webApp?.expand();
+  }
+
+  getColorScheme(): "light" | "dark" | undefined {
+    return this.webApp?.colorScheme;
+  }
+
+  getThemeParams(): TelegramWebAppThemeParams {
+    return this.webApp?.themeParams ?? {};
   }
 }
 
