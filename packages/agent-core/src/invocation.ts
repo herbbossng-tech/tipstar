@@ -100,6 +100,8 @@ export interface InvocationsRepository {
   getByIdempotencyKey(agentType: AgentType, idempotencyKey: string): Promise<AgentInvocationRecord | undefined>;
   transitionTo(invocationId: UUID, status: InvocationStatus, completion?: AgentInvocationCompletionInput): Promise<AgentInvocationRecord>;
   listByCorrelationId(correlationId: UUID): Promise<readonly AgentInvocationRecord[]>;
+  /** Section 11 addition — bounded, newest-first listing for the admin "agent operations" view. `agentType` is optional (omit for "every agent type"). */
+  listRecentByAgentType(agentType: AgentType | undefined, limit: number): Promise<readonly AgentInvocationRecord[]>;
 }
 
 export class InMemoryInvocationsRepository implements InvocationsRepository {
@@ -169,5 +171,12 @@ export class InMemoryInvocationsRepository implements InvocationsRepository {
 
   async listByCorrelationId(correlationId: UUID): Promise<readonly AgentInvocationRecord[]> {
     return [...this.byId.values()].filter((record) => record.correlationId === correlationId);
+  }
+
+  async listRecentByAgentType(agentType: AgentType | undefined, limit: number): Promise<readonly AgentInvocationRecord[]> {
+    return [...this.byId.values()]
+      .filter((record) => agentType === undefined || record.agentType === agentType)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, limit);
   }
 }

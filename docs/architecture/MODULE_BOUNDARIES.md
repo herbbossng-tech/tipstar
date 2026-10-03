@@ -442,6 +442,61 @@ See [`TELEGRAM_PUBLISHING_ARCHITECTURE.md`](./TELEGRAM_PUBLISHING_ARCHITECTURE.m
 [`PUBLISHING_POLICY.md`](./PUBLISHING_POLICY.md), and
 [`TELEGRAM_SECURITY.md`](./TELEGRAM_SECURITY.md) for the full design.
 
+## Automation Operations, Licensing Administration & Reporting Boundary (Section 11)
+
+`packages/platform/src/operations/*` and `packages/agents/src/jobs/*` +
+`operations/agent-operations.ts` + `weekly-report-service.ts` are real,
+built as an **operations control plane** downstream of every boundary
+above — never a second domain engine:
+
+- **License administration** (`operations/license-admin.ts`) adds only
+  `renewLicense`/`reactivateLicense`/`listUsersForAdmin`/
+  `inspectUserForAdmin` — `createLicense`/`suspendLicense`/
+  `revokeLicense`/`assignEntitlement`/`removeEntitlement`/
+  `setLicenseLimit` already existed (Section 03) and are reused as-is,
+  never duplicated.
+- **Authorization matrix** (`operations/authorization-matrix.ts`) is a
+  read-only, presentation-only `canPerform()` — the real authority is
+  still each call site's own `requireAdmin()`/`requireOwner()`.
+- **A durable job queue** (`operations/jobs.ts` + `operational_jobs`
+  table, claimed via `claim_next_operational_job()`'s
+  `FOR UPDATE SKIP LOCKED`) now exists for exactly four job types
+  (`WEEKLY_REPORT_GENERATION`/`TELEGRAM_REPORT_PUBLICATION`/
+  `PERFORMANCE_SNAPSHOT`/`OPERATIONAL_HEALTH_CHECK`), each with a real
+  handler in `packages/agents/src/jobs/*` — `OperationalJobWorker` never
+  trusts a job's payload/creator as authorization.
+- **Weekly reporting** (`weekly-report-service.ts`) reads the real
+  `performance_ledger` (written, for the first time, by
+  `PerformanceSnapshotJobHandler` from the real `settlements` table via
+  the already-real `buildPerformanceLedgerEntry()`) and publishes
+  through the existing Telegram publishing path
+  (`AgentOrchestrator.dispatch()` to `TelegramChannelManagementAgent`) —
+  never a direct Telegram API call, never a second aggregation
+  algorithm. Reports are insert-only, versioned via
+  `supersedes_report_id`, never overwritten.
+- **Operational visibility** (`operations/agent-operations.ts`) composes
+  the existing `InvocationsRepository`/`AgentInvocationRecord` (Section
+  06) into admin-facing counts — it adds no retry/re-run of an agent
+  invocation directly; a job retry is the only "retry" surface.
+
+**What was deliberately not built**: a standalone deployed process that
+calls `OperationalJobWorker.runOnce()` on a schedule (the worker and
+every handler are real and tested; nothing yet runs the loop — see
+`OPEN_QUESTIONS.md`), the full Licenses/Users/Agents/Audit/System admin
+Mini App screens (Home/Jobs/Reports only), and a dedicated settlements-
+connectivity health probe (`OPERATIONAL_HEALTH_CHECK` reports that
+subsystem `UNKNOWN`, never a fabricated `HEALTHY`).
+
+This boundary owns *license/entitlement administration, durable job
+scheduling, operational visibility, and weekly reporting* — never
+prediction, decision, risk, execution, or settlement calculation, and
+never a second Telegram publishing pipeline. See
+[`SECTION_11_OPERATIONS_ARCHITECTURE.md`](./SECTION_11_OPERATIONS_ARCHITECTURE.md),
+[`LICENSE_ADMINISTRATION.md`](./LICENSE_ADMINISTRATION.md),
+[`JOBS_AND_SCHEDULING.md`](./JOBS_AND_SCHEDULING.md),
+[`WEEKLY_REPORTING.md`](./WEEKLY_REPORTING.md), and
+[`OPERATIONS_SECURITY.md`](./OPERATIONS_SECURITY.md) for the full design.
+
 ## What's explicitly deferred to later sections
 
 - Value-selection policy math (`DecisionEngine.assess()`), ticket-level
@@ -456,19 +511,20 @@ See [`TELEGRAM_PUBLISHING_ARCHITECTURE.md`](./TELEGRAM_PUBLISHING_ARCHITECTURE.m
   integration (the typed `ExecutionIntegration` boundary exists; its only
   implementation reports itself unavailable — so every Section 08
   settlement's `actualPayout`/`actualStake` remains `null` in practice
-  until one exists), SportyBet automation, an FX conversion layer
-  (multi-currency amounts stay strictly separated, never summed), and
-  weekly reporting of settlement results (Section 11 — Telegram
-  publishing itself is now real as of Section 10). All model/
+  until one exists), SportyBet automation, and an FX conversion layer
+  (multi-currency amounts stay strictly separated, never summed). Weekly
+  reporting of settlement results is now real (Section 11), bounded to
+  the `(ledgerMode, ticketType)` breakdown `PerformanceSnapshotJobHandler`
+  persists — no league/market/model/policy breakdown yet. All model/
   statistical/ML computation for Aviator (`aviator-engine` — no section
   assigned yet).
 - Real provider integrations (football data, odds — the adapter contract
   and pipeline are real as of Section 04, but no live credential exists;
   see `FOOTBALL_DATA_ARCHITECTURE.md`; Aviator data — untouched).
-- Persistence for Reporting (Section 11) — Identity and License
-  persistence landed in Section 03; Settlement persistence landed in
-  Section 08; Telegram destination/publication persistence landed in
-  Section 10; this remains open.
+- Reporting persistence landed in Section 11 (`weekly_reports`,
+  `performance_ledger` writes). Identity and License persistence landed
+  in Section 03; Settlement persistence landed in Section 08; Telegram
+  destination/publication persistence landed in Section 10.
 - Real execution (any agent actually placing/confirming a wager) — the
   typed `ExecutionIntegration` boundary (`@sport-os/agents`, extended
   Section 07 with `validate()`/`status()`/`ExecutionResultStatus`) both

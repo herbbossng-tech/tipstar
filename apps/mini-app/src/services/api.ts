@@ -91,3 +91,8 @@ export function buildQueryString(params: Readonly<Record<string, string | undefi
 export async function authedGet<T>(path: string, sessionToken: string, params: Readonly<Record<string, string | undefined>> = {}): Promise<T> {
   return apiRequest<T>(`${path}${buildQueryString(params)}`, { method: "GET", headers: { authorization: `Bearer ${sessionToken}` } });
 }
+
+/** Thin convenience wrapper over `apiRequest` for an authenticated POST with a bearer session token (Section 11 — admin mutation endpoints: job retry, report generation). The server independently re-verifies OWNER/ADMIN role on every call; this wrapper carries no authorization logic of its own. */
+export async function authedPost<T>(path: string, sessionToken: string, body: unknown): Promise<T> {
+  return apiRequest<T>(path, { method: "POST", headers: { authorization: `Bearer ${sessionToken}` }, body });
+}

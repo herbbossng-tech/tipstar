@@ -1,8 +1,20 @@
-import { listDestinations, verifyDestination, type DestinationManagerDependencies } from "@sport-os/agents";
-import { upsertAuthenticatedTelegramUser, type AppUser, type AuditService, type AuthorizationContext, type LicenseService, type UsersRepository } from "@sport-os/platform";
+import { getAgentOperationsSummary, listDestinations, verifyDestination, type DestinationManagerDependencies, type WeeklyReportRecord } from "@sport-os/agents";
+import type { InvocationsRepository } from "@sport-os/agent-core";
+import { requireAdmin, upsertAuthenticatedTelegramUser, type AppUser, type AuditService, type AuthorizationContext, type LicenseService, type OperationalJobsRepository, type UsersRepository } from "@sport-os/platform";
 import type { UUID } from "@sport-os/shared";
 import type { TelegramDestinationManager, TelegramService } from "@sport-os/telegram";
 import type { CommandReply, TelegramCommandUser } from "./types.js";
+
+/**
+ * The minimal slice of `SupabaseWeeklyReportsRepository` the bot's
+ * `/adminreports` command needs (Section 11 §T) — a narrow interface
+ * rather than the concrete class, same reasoning as
+ * `weekly-report-service.ts`'s `WeeklyReportsStore`: keeps this module
+ * testable against a plain fake without pulling in Supabase types.
+ */
+export interface WeeklyReportsListing {
+  listRecent(limit: number): Promise<readonly WeeklyReportRecord[]>;
+}
 
 /**
  * The real command handlers (Section 10 §32-§34). Every handler takes
@@ -35,6 +47,10 @@ export interface CommandDependencies {
   readonly appName: string;
   /** `undefined` means every "open the Mini App" reply below omits its button rather than fabricating a URL. */
   readonly miniAppUrl: string | undefined;
+  /** Section 11 — operational visibility, OWNER/ADMIN only (see `requireAdmin()` calls in the `handleAdmin*` functions below). */
+  readonly operationalJobs: OperationalJobsRepository;
+  readonly weeklyReports: WeeklyReportsListing;
+  readonly agentInvocations: InvocationsRepository;
 }
 
 /**
@@ -80,6 +96,10 @@ export async function handleHelp(): Promise<CommandReply> {
       "/aviator — not yet available",
       "/destinations — list configured publishing destinations (admin only)",
       "/verifydestination <destination_id> — verify bot access to a destination (admin only)",
+      "/admin — operations menu (admin only)",
+      "/adminjobs — recent operational jobs (admin only)",
+      "/adminreports — recent weekly reports (admin only)",
+      "/adminagents — recent agent invocation failures (admin only)",
     ].join("\n"),
   };
 }
@@ -148,4 +168,61 @@ export async function handleVerifyDestination(deps: CommandDependencies, from: T
   const result = await verifyDestination(depsForManager, toAuthorizationContext(user), destinationIdArg as UUID);
   if (!result.ok) return { text: result.error.message };
   return { text: `Destination "${result.value.name}" is now ${result.value.verificationStatus ?? "unverified"}.` };
+}
+
+const ADMIN_LIST_LIMIT = 5;
+
+/**
+ * Admin operational commands (Section 11 §T). Every one of these
+ * independently calls `requireAdmin()` on the SAME `AuthorizationContext`
+ * every other admin surface in this codebase uses — never a bot-only
+ * authorization path, and never a check skipped because "the user
+ * already typed an admin-looking command." Per §T: a deep link into
+ * the Mini App's `/admin` route is offered instead of trying to
+ * reproduce its full tables as Telegram message text (mirrors
+ * `miniAppOnlyReply()`'s existing precedent of pointing every
+ * Mini-App-only feature at the same configured `miniAppUrl`).
+ */
+export async function handleAdmin(deps: CommandDependencies, from: TelegramCommandUser): Promise<CommandReply> {
+  const user = await identify(deps, from);
+  const denied = requireAdmin(toAuthorizationContext(user));
+  if (denied) return { text: denied.message };
+
+  const text = ["Admin operations:", "/adminjobs — recent operational jobs", "/adminreports — recent weekly reports", "/adminagents — recent agent invocation failures"].join("\n");
+  if (!deps.miniAppUrl) return { text };
+  return { text, buttons: [{ text: "Open Admin in Mini App", url: deps.miniAppUrl }] };
+}
+
+export async function handleAdminJobs(deps: CommandDependencies, from: TelegramCommandUser): Promise<CommandReply> {
+  const user = await identify(deps, from);
+  const denied = requireAdmin(toAuthorizationContext(user));
+  if (denied) return { text: denied.message };
+
+  const jobs = await deps.operationalJobs.listRecent({ limit: ADMIN_LIST_LIMIT });
+  if (jobs.length === 0) return { text: "No operational jobs recorded yet." };
+  return {
+    text: jobs.map((job) => `${job.jobType} — ${job.status} (attempt ${job.attempts}/${job.maxAttempts})${job.lastError ? ` — ${job.lastError}` : ""}`).join("\n"),
+  };
+}
+
+export async function handleAdminReports(deps: CommandDependencies, from: TelegramCommandUser): Promise<CommandReply> {
+  const user = await identify(deps, from);
+  const denied = requireAdmin(toAuthorizationContext(user));
+  if (denied) return { text: denied.message };
+
+  const reports = await deps.weeklyReports.listRecent(ADMIN_LIST_LIMIT);
+  if (reports.length === 0) return { text: "No weekly reports have been generated yet." };
+  return {
+    text: reports.map((report) => `${report.periodStart.slice(0, 10)} – ${report.periodEnd.slice(0, 10)} · ${report.ledgerMode} · v${report.reportVersion}`).join("\n"),
+  };
+}
+
+export async function handleAdminAgents(deps: CommandDependencies, from: TelegramCommandUser): Promise<CommandReply> {
+  const user = await identify(deps, from);
+  const result = await getAgentOperationsSummary(deps.agentInvocations, toAuthorizationContext(user), undefined, 100);
+  if (!result.ok) return { text: result.error.message };
+  const summary = result.value;
+  return {
+    text: [`Invocations inspected: ${summary.totalInvocations}`, `Completed: ${summary.completedCount}`, `Running: ${summary.runningCount}`, `Failed: ${summary.failedCount} (retryable: ${summary.retryableFailureCount}, permanent: ${summary.permanentFailureCount})`].join("\n"),
+  };
 }

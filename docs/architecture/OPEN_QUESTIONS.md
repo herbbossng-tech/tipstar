@@ -453,6 +453,10 @@ attempt. **Next decision point:** if a stronger pre-flight guarantee is
 needed, resolve and persist the bot's own numeric id (via `getMe`) and
 extend `verifyDestination()` to also call `getChatMember()`.
 
+**Section 11 note:** unaffected and unresolved — Section 11 builds no
+new destination-verification logic; it only reads destination data
+through the existing `inspectUserForAdmin()`/admin surfaces.
+
 ## 29. `/football`/`/tickets`/`/performance` bot commands deep-link to the Mini App rather than querying data directly
 
 Section 09 already built the real read-model query logic for this data
@@ -471,7 +475,20 @@ data (e.g. `/tickets` listing real tickets in-chat), extract a shared
 query layer both the edge functions and the bot can call, rather than
 writing a third independent implementation.
 
-## 30. No `publication_jobs` queue table — publishing is synchronous per destination
+**Section 11 note:** the same reasoning was deliberately extended, not
+revisited, for the new `/admin`/`/adminjobs`/`/adminreports`/
+`/adminagents` bot commands — `handleAdmin()` points at the Mini App's
+`/admin` route via the same `miniAppUrl` button rather than reproducing
+its tables as Telegram message text, per Section 11's own Part T
+("deep-links into Mini App acceptable instead of duplicating full
+operational UI in Telegram messages"). `/adminjobs`/`/adminreports`/
+`/adminagents` DO return real inline summaries (bounded to 5 rows, or a
+real aggregate count) rather than only a deep link — a small, deliberate
+exception, since these are admin-only, low-volume, and already
+backend-authorized reads, not a third independent implementation of a
+user-facing query.
+
+## 30. No `publication_jobs` queue table — publishing is synchronous per destination — RESOLVED for new work (Section 11); Section 10's own loop is unchanged
 
 Section 10's spec explicitly permits skipping a job queue "if synchronous
 handling is safe and the reasoning is documented." `TelegramChannelManagementAgent`
@@ -488,6 +505,24 @@ asynchronous/out-of-process retry becomes necessary, revisit this with a
 real job queue and worker — do not silently keep stretching the inline
 loop past the point this reasoning holds.
 
+**Section 11 resolution:** a real, durable, Postgres-backed job queue
+(`operational_jobs`, atomic `claim_next_operational_job()`) now exists —
+exactly the "real job queue and worker" this entry's next-decision-point
+called for. It is used for `WEEKLY_REPORT_GENERATION`,
+`TELEGRAM_REPORT_PUBLICATION`, `PERFORMANCE_SNAPSHOT`, and
+`OPERATIONAL_HEALTH_CHECK`. This does NOT change Section 10's own
+per-destination publishing loop inside `TelegramChannelManagementAgent`
+— a `TELEGRAM_REPORT_PUBLICATION` job wraps a dispatch to that same
+synchronous `execute()` call as ONE job attempt; ticket/result
+publications still fan out synchronously exactly as Section 10 built
+them. If ticket-publication volume ever needs the same durable-job
+treatment, that specific question is still open — but the underlying
+"no job queue exists at all" gap this entry originally named is closed.
+Also still open: no standalone deployed process calls
+`OperationalJobWorker.runOnce()` on a schedule yet (see the new entry
+below) — the queue and worker exist and are tested, but nothing runs
+the loop in production today.
+
 ## 31. `InMemoryLicensesRepository` doesn't merge entitlements — a pre-existing test-fake gap, not a Section 10 defect
 
 Writing `publishing-authorizer.test.ts` surfaced that
@@ -502,3 +537,83 @@ an in-memory license-with-entitlements fixture, fix
 `InMemoryLicensesRepository`/`InMemoryLicenseEntitlementsRepository` to
 merge consistently with the real Supabase pair, rather than each new
 test inventing its own workaround.
+
+**Section 11 note:** still open and still a pre-existing gap, not fixed.
+Section 11's own tests (`license-admin.test.ts`,
+`section11-adversarial.test.ts`) avoid it the same way Section 10 did —
+by exercising `renewLicense`/`reactivateLicense`/`inspectUserForAdmin`
+against minimal fakes typed directly against the real repository
+interfaces rather than relying on `InMemoryLicensesRepository`'s
+entitlement-merging gap. Fixing it was deliberately not done here
+either, per the spec's own instruction to "improve only if required for
+Section 11 correctness, never alter production authorization semantics
+just to satisfy a test" — it wasn't required.
+
+## 32. `PerformanceSnapshotJobHandler` only breaks out `(ledgerMode, ticketType)` — no league/market/model/policy dimension yet
+
+`performance_ledger`'s schema (Section 08) supports breaking out by
+`league`/`market`/`modelVersion`/`decisionPolicyVersion` as well as
+`ledgerMode`/`ticketType`/`sport`, but Section 11's first
+`PerformanceSnapshotJobHandler` only populates the latter three
+(`sport` hardcoded `"football"`, the only sport ever persisted).
+Resolving the richer breakdown would require joining `settlements`
+through `tickets` -> `ticket_legs` -> `decisions`/`value_evaluations` to
+recover each settlement's market/league/model/policy lineage — real
+work, deliberately deferred to keep this handler's first version
+honest and bounded rather than half-implemented. **Next decision
+point:** if admin reporting genuinely needs a league/market/model/policy
+breakdown (not just an aggregate per period/ledger-mode/ticket-type),
+extend `PerformanceSnapshotJobHandler`'s query to join through those
+tables and pass the resolved dimensions into
+`buildPerformanceLedgerEntry()` — the aggregation function itself
+already accepts them.
+
+## 33. No standalone deployed process runs `OperationalJobWorker.runOnce()` on a schedule
+
+`OperationalJobWorker` and all four job handlers (`PerformanceSnapshotJobHandler`,
+`WeeklyReportGenerationJobHandler`, `TelegramReportPublicationJobHandler`,
+`OperationalHealthCheckJobHandler`) are real, unit-tested, and ready to
+run — but nothing in `apps/` instantiates `OperationalJobWorker` and
+calls `runOnce()` in a loop today. A job enqueued via `admin-reports`'s
+POST handler (or any future scheduler) sits QUEUED until something
+calls the worker against the same database. Building a new deployable
+worker process (its own entrypoint, process supervision, and
+deployment configuration) was judged out of scope for "build the
+durable job abstraction" — Section 11 built the queue, the atomic
+claim, the worker, and the handlers, not a new always-running service.
+**Next decision point:** add a minimal worker entrypoint (e.g. a small
+Node script in a new `apps/worker` or a scheduled Edge Function /
+external cron invoking an HTTP endpoint that calls `runOnce()` for each
+job type) and decide its actual deployment story.
+
+## 34. `OPERATIONAL_HEALTH_CHECK`'s settlement-subsystem probe is always `UNKNOWN`
+
+`OperationalHealthCheckJobHandler` probes database/job-runner (via
+`operational_jobs`), the agent framework (via `agent_invocations`), and
+the reporting subsystem (via `performance_ledger`) with real reads, but
+deliberately does not probe the `settlements`/`tickets` tables directly
+— doing so would mean adding a new Supabase client dependency to this
+handler for a signal the reporting probe already substantially covers
+(both tables live in the same Postgres instance). It always reports
+`SETTLEMENT_SUBSYSTEM: UNKNOWN` with an explicit reason, never a
+fabricated `HEALTHY`. **Next decision point:** if settlement-specific
+connectivity ever needs its own signal (e.g. to distinguish "the
+database is up" from "the settlements table specifically is
+reachable"), add a dedicated bounded read against `settlements` to this
+handler.
+
+## 35. The admin Mini App ships Home/Jobs/Reports only — Licenses/Users/Agents/Audit/System screens are backend-ready but have no UI yet
+
+Every backend capability the spec's full admin UI describes is real and
+tested: `listUsersForAdmin`/`inspectUserForAdmin` (Licenses/Users),
+`getAgentOperationsSummary` (Agents), `evaluateOperationalHealth`
+(System), and the existing `AuditService`/`audit_logs` (Audit, already
+built in Section 03). Section 11 built three Edge Functions
+(`admin-overview`/`admin-jobs`/`admin-reports`) and three matching Mini
+App screens, choosing the highest-value subset within this section's
+scope rather than building five more Edge Functions and screens at
+lower depth each. **Next decision point:** add `admin-licenses`/
+`admin-users`/`admin-agents`/`admin-audit`/`admin-health` Edge Functions
+(each a thin wrapper over the already-real functions above) and their
+matching `/admin/licenses`/`/admin/users`/`/admin/agents`/`/admin/audit`/
+`/admin/system` Mini App routes.
