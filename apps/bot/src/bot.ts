@@ -3,6 +3,10 @@ import type { AppConfig } from "@sport-os/config";
 import type { Logger } from "@sport-os/shared";
 import {
   handleAccount,
+  handleAdmin,
+  handleAdminAgents,
+  handleAdminJobs,
+  handleAdminReports,
   handleAviator,
   handleDestinations,
   handleFootball,
@@ -81,6 +85,10 @@ export function createBot(config: AppConfig, logger: Logger, deps: CommandDepend
     "verifydestination",
     withIdentifiedUser((d, from, ctx) => handleVerifyDestination(d, from, ctx.match?.toString().trim() || undefined), deps),
   );
+  bot.command("admin", withIdentifiedUser((d, from) => handleAdmin(d, from), deps));
+  bot.command("adminjobs", withIdentifiedUser((d, from) => handleAdminJobs(d, from), deps));
+  bot.command("adminreports", withIdentifiedUser((d, from) => handleAdminReports(d, from), deps));
+  bot.command("adminagents", withIdentifiedUser((d, from) => handleAdminAgents(d, from), deps));
 
   bot.catch((error) => {
     logger.error("Unhandled bot error", { error: String(error.error) });

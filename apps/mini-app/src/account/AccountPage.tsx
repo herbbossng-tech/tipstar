@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { useAuthIdentity } from "../auth/AuthContext.js";
 import { useProfile } from "../auth/useProfile.js";
 import { EmptyState } from "../shared/EmptyState.js";
@@ -44,6 +45,12 @@ export function AccountPage(): JSX.Element {
         {identity.authMode === "dev" ? <span className="identity-badge__dev-tag">DEV MODE</span> : null}
         <p className="card__meta">Session expires {formatDateTime(session.expiresAt)}</p>
       </div>
+
+      {identity.role === "owner" || identity.role === "admin" ? (
+        <Link to="/admin" className="button button--secondary">
+          Admin
+        </Link>
+      ) : null}
 
       {profileQuery.status === "loading" ? <LoadingState label="Loading your license…" /> : null}
       {profileQuery.status === "error" ? <QueryErrorState code={profileQuery.code} message={profileQuery.message} onRetry={profileQuery.refetch} /> : null}

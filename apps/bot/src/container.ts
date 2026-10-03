@@ -1,4 +1,4 @@
-import { SupabaseTelegramDestinationManager } from "@sport-os/agents";
+import { SupabaseInvocationsRepository, SupabaseOperationalJobsRepository, SupabaseTelegramDestinationManager, SupabaseWeeklyReportsRepository } from "@sport-os/agents";
 import type { AppConfig } from "@sport-os/config";
 import {
   createServiceRoleClient,
@@ -42,6 +42,9 @@ export function buildBotContainer(config: AppConfig): CommandDependencies {
   const audit = new SupabaseAuditService(client);
   const destinations = new SupabaseTelegramDestinationManager(client);
   const telegram = new TelegramBotApiService({ botToken: config.telegram.botToken, retryLimit: config.telegram.publishRetryLimit, timeoutMs: config.telegram.publishTimeoutMs });
+  const operationalJobs = new SupabaseOperationalJobsRepository(client);
+  const weeklyReports = new SupabaseWeeklyReportsRepository(client);
+  const agentInvocations = new SupabaseInvocationsRepository(client);
 
-  return { users, licenseService, destinations, telegram, audit, appName: config.app.name, miniAppUrl: config.telegram.miniAppUrl };
+  return { users, licenseService, destinations, telegram, audit, appName: config.app.name, miniAppUrl: config.telegram.miniAppUrl, operationalJobs, weeklyReports, agentInvocations };
 }

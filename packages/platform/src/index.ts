@@ -12,3 +12,8 @@ export * from "./owner-bootstrap.js";
 export * from "./db/client.js";
 export * from "./db/types.js";
 export * from "./db/supabase-session-store.js";
+export * from "./operations/license-admin.js";
+export * from "./operations/authorization-matrix.js";
+export * from "./operations/platform-settings-admin.js";
+export * from "./operations/operational-health.js";
+export * from "./operations/jobs.js";

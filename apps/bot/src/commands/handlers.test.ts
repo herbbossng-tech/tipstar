@@ -1,3 +1,4 @@
+import { InMemoryInvocationsRepository } from "@sport-os/agent-core";
 import {
   DatabaseLicenseService,
   InMemoryAuditService,
@@ -6,13 +7,21 @@ import {
   InMemoryLicensesRepository,
   InMemoryUsersRepository,
   LicenseStatus,
+  NotImplementedOperationalJobsRepository,
   Role,
 } from "@sport-os/platform";
 import { err, IntegrationError, ok } from "@sport-os/shared";
 import { TelegramDestinationType, type SendMessageResult, type TelegramDestination, type TelegramDestinationManager, type TelegramService } from "@sport-os/telegram";
 import { describe, expect, it } from "vitest";
-import { handleAccount, handleAviator, handleDestinations, handleFootball, handleHelp, handlePerformance, handleStart, handleStatus, handleVerifyDestination, type CommandDependencies } from "./handlers.js";
+import { handleAccount, handleAdmin, handleAdminAgents, handleAdminJobs, handleAdminReports, handleAviator, handleDestinations, handleFootball, handleHelp, handlePerformance, handleStart, handleStatus, handleVerifyDestination, type CommandDependencies, type WeeklyReportsListing } from "./handlers.js";
 import type { TelegramCommandUser } from "./types.js";
+
+class StubWeeklyReportsListing implements WeeklyReportsListing {
+  constructor(private readonly reports: never[] = []) {}
+  async listRecent() {
+    return this.reports;
+  }
+}
 
 function user(overrides: Partial<TelegramCommandUser> = {}): TelegramCommandUser {
   return { telegramUserId: 42, firstName: "Ada", lastName: undefined, username: "ada", languageCode: "en", isPremium: false, ...overrides };
@@ -54,7 +63,16 @@ function buildDeps(overrides: Partial<Omit<CommandDependencies, "users">> = {}):
   const destinations = new StubDestinationManager();
   const telegram = stubTelegram(true);
   const audit = new InMemoryAuditService();
-  return { licenseService, destinations, telegram, audit, appName: "Sport Intelligence OS", miniAppUrl: undefined, ...overrides, users };
+  const operationalJobs = new NotImplementedOperationalJobsRepository();
+  const weeklyReports = new StubWeeklyReportsListing();
+  const agentInvocations = new InMemoryInvocationsRepository();
+  return { licenseService, destinations, telegram, audit, appName: "Sport Intelligence OS", miniAppUrl: undefined, operationalJobs, weeklyReports, agentInvocations, ...overrides, users };
+}
+
+/** Seeds an ADMIN-role user under the given Telegram id so `identify()` (called first thing by every handler) resolves a real admin `AppUser` — never a role claimed by the test's own `TelegramCommandUser` input, which carries no role field at all (Section 11 §G/§W: a role is never forged via the caller's own claimed identity). */
+async function seedAdmin(users: InMemoryUsersRepository, telegramUserId: number): Promise<void> {
+  const seeded = await users.upsertFromTelegram({ telegramUserId, username: "admin", firstName: "Admin", lastName: undefined, languageCode: "en", isPremium: false, authenticatedAt: new Date().toISOString() });
+  await users.updateRole(seeded.id, Role.ADMIN);
 }
 
 describe("bot command handlers", () => {
@@ -175,5 +193,76 @@ describe("bot command handlers", () => {
     );
     const reply = await handleVerifyDestination(deps, user(), created.destinationId);
     expect(reply.text).toContain("failed");
+  });
+
+  describe("Section 11 admin commands — authorization is resolved from the real stored user, never the caller's claimed identity", () => {
+    it("/admin denies a plain USER", async () => {
+      const deps = buildDeps();
+      const reply = await handleAdmin(deps, user());
+      expect(reply.text).toContain("administrative authority");
+    });
+
+    it("/admin shows the menu to a real ADMIN user", async () => {
+      const deps = buildDeps();
+      await seedAdmin(deps.users, 42);
+      const reply = await handleAdmin(deps, user());
+      expect(reply.text).toContain("/adminjobs");
+    });
+
+    it("/adminjobs denies a plain USER", async () => {
+      const deps = buildDeps();
+      const reply = await handleAdminJobs(deps, user());
+      expect(reply.text).toContain("administrative authority");
+    });
+
+    it("/adminjobs lists real queued/failed jobs for an admin, never a fabricated summary", async () => {
+      const now = new Date().toISOString();
+      const job = { jobId: "j1", jobType: "PERFORMANCE_SNAPSHOT", status: "FAILED", payloadReference: {}, scheduledAt: now, startedAt: now, completedAt: undefined, attempts: 3, maxAttempts: 3, nextAttemptAt: undefined, lastError: "boom", lastFailureCategory: "TIMEOUT", idempotencyKey: "k1", createdBy: "system", createdAt: now, updatedAt: now } as never;
+      const operationalJobs = new NotImplementedOperationalJobsRepository();
+      operationalJobs.listRecent = async () => [job];
+      const deps = buildDeps({ operationalJobs });
+      await seedAdmin(deps.users, 42);
+      const reply = await handleAdminJobs(deps, user());
+      expect(reply.text).toContain("PERFORMANCE_SNAPSHOT");
+      expect(reply.text).toContain("FAILED");
+      expect(reply.text).toContain("boom");
+    });
+
+    it("/adminjobs reports an honest empty state rather than fabricating activity", async () => {
+      const operationalJobs = new NotImplementedOperationalJobsRepository();
+      operationalJobs.listRecent = async () => [];
+      const deps = buildDeps({ operationalJobs });
+      await seedAdmin(deps.users, 42);
+      const reply = await handleAdminJobs(deps, user());
+      expect(reply.text).toBe("No operational jobs recorded yet.");
+    });
+
+    it("/adminreports denies a plain USER", async () => {
+      const deps = buildDeps();
+      const reply = await handleAdminReports(deps, user());
+      expect(reply.text).toContain("administrative authority");
+    });
+
+    it("/adminreports lists real report versions for an admin", async () => {
+      const report = { reportId: "r1", periodStart: "2026-01-01T00:00:00Z", periodEnd: "2026-01-07T23:59:59Z", ledgerMode: "LIVE", reportVersion: 1, status: "FINALIZED", generatedAt: "2026-01-08T00:00:00Z", generatedBy: "system", sourceReference: {}, reportPayload: {}, supersedesReportId: undefined, supersededReason: undefined, idempotencyKey: "k1", createdAt: "2026-01-08T00:00:00Z" };
+      const deps = buildDeps({ weeklyReports: new StubWeeklyReportsListing([report as never]) });
+      await seedAdmin(deps.users, 42);
+      const reply = await handleAdminReports(deps, user());
+      expect(reply.text).toContain("LIVE");
+      expect(reply.text).toContain("v1");
+    });
+
+    it("/adminagents denies a plain USER (via the real getAgentOperationsSummary authorization check)", async () => {
+      const deps = buildDeps();
+      const reply = await handleAdminAgents(deps, user());
+      expect(reply.text).toContain("administrative authority");
+    });
+
+    it("/adminagents reports real zero counts rather than fabricating activity when nothing has run yet", async () => {
+      const deps = buildDeps();
+      await seedAdmin(deps.users, 42);
+      const reply = await handleAdminAgents(deps, user());
+      expect(reply.text).toContain("Invocations inspected: 0");
+    });
   });
 });

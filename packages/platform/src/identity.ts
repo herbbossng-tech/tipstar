@@ -77,6 +77,8 @@ export interface UsersRepository {
   }): Promise<AppUser>;
   updateRole(userId: UUID, role: Role): Promise<AppUser>;
   updateStatus(userId: UUID, status: UserStatus): Promise<AppUser>;
+  /** Section 11 addition — bounded listing for admin "list users" views. `limit` is always enforced (never unbounded), ordered newest-first. */
+  listAll(params: { readonly limit: number; readonly offset: number }): Promise<readonly AppUser[]>;
 }
 
 /** In-memory implementation for fast unit tests — real logic, no network, mirroring InMemoryAgentRegistry/InMemoryAuditService. */
@@ -137,6 +139,10 @@ export class InMemoryUsersRepository implements UsersRepository {
     const updated = { ...existing, status, updatedAt: new Date().toISOString() };
     this.users.set(userId, updated);
     return updated;
+  }
+
+  async listAll(params: { readonly limit: number; readonly offset: number }): Promise<readonly AppUser[]> {
+    return [...this.users.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(params.offset, params.offset + params.limit);
   }
 }
 
@@ -214,6 +220,12 @@ export class SupabaseUsersRepository implements UsersRepository {
       throw new ValidationError({ message: "Failed to update user status.", code: "STATUS_UPDATE_FAILED", context: { reason: error?.message } });
     }
     return userRowToDomain(data as UserRow);
+  }
+
+  async listAll(params: { readonly limit: number; readonly offset: number }): Promise<readonly AppUser[]> {
+    const { data, error } = await this.client.from("users").select(USER_COLUMNS).order("created_at", { ascending: false }).range(params.offset, params.offset + params.limit - 1);
+    if (error || !data) return [];
+    return (data as readonly UserRow[]).map(userRowToDomain);
   }
 }
 

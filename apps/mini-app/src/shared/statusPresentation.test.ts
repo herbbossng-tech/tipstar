@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeDecisionOutcome, describeExecutionStatus, describeLicenseStatus, describeMatchStatus, describeRiskApproval, describeSettlementStatus, describeTicketStatus, glyphForTone } from "./statusPresentation.js";
+import { describeDecisionOutcome, describeExecutionStatus, describeJobStatus, describeLicenseStatus, describeMatchStatus, describeRiskApproval, describeSettlementStatus, describeTicketStatus, glyphForTone } from "./statusPresentation.js";
 
 describe("statusPresentation", () => {
   it("maps every real ExecutionResultStatus value plus the two Mini-App-only states, never a generic fallback for a known value", () => {
@@ -51,6 +51,14 @@ describe("statusPresentation", () => {
     for (const status of ["trial", "active", "suspended", "expired", "revoked"]) {
       expect(describeLicenseStatus(status).label).not.toBe(status);
     }
+  });
+
+  it("maps every real operational job status (Section 11) with WON/LOST-style tone separation", () => {
+    for (const status of ["QUEUED", "RUNNING", "SUCCEEDED", "FAILED", "CANCELLED"]) {
+      expect(describeJobStatus(status).label).not.toBe(status);
+    }
+    expect(describeJobStatus("SUCCEEDED").tone).toBe("success");
+    expect(describeJobStatus("FAILED").tone).toBe("danger");
   });
 
   it("gives every tone a distinct glyph (icon + text, never color alone — §41)", () => {

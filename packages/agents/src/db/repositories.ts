@@ -13,8 +13,9 @@ import type {
   SideEffectLevel,
 } from "@sport-os/agent-core";
 import { isValidInvocationTransition } from "@sport-os/agent-core";
-import type { SupabaseClient } from "@sport-os/platform";
+import { isValidJobTransition, type JobFailureCategory, type JobStatus, type NewOperationalJobInput, type OperationalJobCompletionInput, type OperationalJobRecord, type OperationalJobsRepository, type OperationalJobType, type SupabaseClient } from "@sport-os/platform";
 import { InternalError, ValidationError, type UUID } from "@sport-os/shared";
+import type { PerformanceLedgerEntry } from "@sport-os/settlement-engine";
 import type {
   NewTelegramPublicationInput,
   PublicationSourceType,
@@ -26,7 +27,7 @@ import type {
   TelegramPublicationRecord,
   TelegramPublicationsRepository,
 } from "@sport-os/telegram";
-import type { AgentInvocationRow, AgentMessageRow, TelegramDestinationRow, TelegramPublicationRow } from "./types.js";
+import type { AgentInvocationRow, AgentMessageRow, OperationalJobRow, PerformanceLedgerRow, TelegramDestinationRow, TelegramPublicationRow, WeeklyReportRow } from "./types.js";
 
 /**
  * Real, Supabase-backed persistence for the Section 06 agent-operational
@@ -139,6 +140,14 @@ export class SupabaseInvocationsRepository implements InvocationsRepository {
     if (error || !data) return [];
     return (data as readonly AgentInvocationRow[]).map(rowToInvocation);
   }
+
+  async listRecentByAgentType(agentType: AgentType | undefined, limit: number): Promise<readonly AgentInvocationRecord[]> {
+    let query = this.client.from("agent_invocations").select("*").order("created_at", { ascending: false }).limit(limit);
+    if (agentType) query = query.eq("agent_type", agentType);
+    const { data, error } = await query;
+    if (error || !data) return [];
+    return (data as readonly AgentInvocationRow[]).map(rowToInvocation);
+  }
 }
 
 /**
@@ -226,6 +235,7 @@ function rowToDestination(row: TelegramDestinationRow): TelegramDestination {
     createdAt: row.created_at,
     verificationStatus: row.verification_status as TelegramDestinationVerificationStatus,
     verifiedAt: row.verified_at ?? undefined,
+    createdBy: row.created_by,
   };
 }
 
@@ -419,5 +429,352 @@ export class SupabaseTelegramPublicationsRepository implements TelegramPublicati
       throw new InternalError({ message: "Failed to count Telegram publications.", code: "TELEGRAM_PUBLICATION_COUNT_FAILED", context: { reason: error.message } });
     }
     return count ?? 0;
+  }
+}
+
+/**
+ * Real, Supabase-backed `OperationalJobsRepository` (Section 11 §E/
+ * §AD). `claimNext()` calls `claim_next_operational_job()` — the one
+ * atomic claim function (`supabase/migrations/*operational_jobs.sql`),
+ * never a client-side SELECT-then-UPDATE (that would race under
+ * concurrent workers exactly the way `claim_owner_bootstrap()`'s own
+ * doc comment explains).
+ */
+function rowToJob(row: OperationalJobRow): OperationalJobRecord {
+  return {
+    jobId: row.job_id as UUID,
+    jobType: row.job_type as OperationalJobType,
+    status: row.status as JobStatus,
+    payloadReference: row.payload_reference,
+    scheduledAt: row.scheduled_at,
+    startedAt: row.started_at ?? undefined,
+    completedAt: row.completed_at ?? undefined,
+    attempts: row.attempts,
+    maxAttempts: row.max_attempts,
+    nextAttemptAt: row.next_attempt_at ?? undefined,
+    lastError: row.last_error ?? undefined,
+    lastFailureCategory: (row.last_failure_category as JobFailureCategory | null) ?? undefined,
+    idempotencyKey: row.idempotency_key,
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export class SupabaseOperationalJobsRepository implements OperationalJobsRepository {
+  constructor(private readonly client: SupabaseClient) {}
+
+  async create(input: NewOperationalJobInput): Promise<OperationalJobRecord> {
+    const now = new Date().toISOString();
+    const { data, error } = await this.client
+      .from("operational_jobs")
+      .insert({
+        job_type: input.jobType,
+        status: "QUEUED",
+        payload_reference: input.payloadReference,
+        scheduled_at: input.scheduledAt,
+        max_attempts: input.maxAttempts,
+        idempotency_key: input.idempotencyKey,
+        created_by: input.createdBy,
+        created_at: now,
+        updated_at: now,
+      })
+      .select("*")
+      .single();
+    if (error || !data) {
+      throw new InternalError({ message: "Failed to create operational job.", code: "OPERATIONAL_JOB_CREATE_FAILED", context: { reason: error?.message } });
+    }
+    return rowToJob(data as OperationalJobRow);
+  }
+
+  async findByIdempotencyKey(idempotencyKey: string): Promise<OperationalJobRecord | undefined> {
+    const { data, error } = await this.client.from("operational_jobs").select("*").eq("idempotency_key", idempotencyKey).maybeSingle();
+    if (error || !data) return undefined;
+    return rowToJob(data as OperationalJobRow);
+  }
+
+  async claimNext(jobType: OperationalJobType | undefined, now: string, leaseTimeoutMs: number): Promise<OperationalJobRecord | undefined> {
+    if (!jobType) return undefined;
+    const { data, error } = await this.client.rpc("claim_next_operational_job", { p_job_type: jobType, p_now: now, p_lease_timeout_ms: leaseTimeoutMs });
+    if (error || !data) return undefined;
+    return rowToJob(data as OperationalJobRow);
+  }
+
+  async transitionTo(jobId: UUID, completion: OperationalJobCompletionInput): Promise<OperationalJobRecord> {
+    const { data: existing, error: readError } = await this.client.from("operational_jobs").select("*").eq("job_id", jobId).maybeSingle();
+    if (readError || !existing) {
+      throw new ValidationError({ message: `No operational job found with id "${jobId}".`, code: "OPERATIONAL_JOB_NOT_FOUND", context: { jobId } });
+    }
+    const existingJob = rowToJob(existing as OperationalJobRow);
+    if (!isValidJobTransition(existingJob.status, completion.status)) {
+      throw new ValidationError({ message: `Invalid operational job transition: ${existingJob.status} -> ${completion.status}.`, code: "OPERATIONAL_JOB_INVALID_TRANSITION", context: { jobId, from: existingJob.status, to: completion.status } });
+    }
+    const now = new Date().toISOString();
+    const isTerminal = completion.status === "SUCCEEDED" || completion.status === "CANCELLED";
+    const { data, error } = await this.client
+      .from("operational_jobs")
+      .update({
+        status: completion.status,
+        last_error: completion.lastError ?? null,
+        last_failure_category: completion.lastFailureCategory ?? null,
+        next_attempt_at: completion.nextAttemptAt ?? null,
+        completed_at: isTerminal ? now : null,
+        updated_at: now,
+      })
+      .eq("job_id", jobId)
+      .select("*")
+      .single();
+    if (error || !data) {
+      throw new InternalError({ message: "Failed to update operational job.", code: "OPERATIONAL_JOB_UPDATE_FAILED", context: { reason: error?.message } });
+    }
+    return rowToJob(data as OperationalJobRow);
+  }
+
+  async listRecent(params: { readonly jobType?: OperationalJobType; readonly status?: JobStatus; readonly limit: number }): Promise<readonly OperationalJobRecord[]> {
+    let query = this.client.from("operational_jobs").select("*").order("created_at", { ascending: false }).limit(params.limit);
+    if (params.jobType) query = query.eq("job_type", params.jobType);
+    if (params.status) query = query.eq("status", params.status);
+    const { data, error } = await query;
+    if (error || !data) return [];
+    return (data as readonly OperationalJobRow[]).map(rowToJob);
+  }
+}
+
+/**
+ * Real, Supabase-backed repository for `weekly_reports` (Section 11
+ * §J-§O). `create()` is the ONLY write method — this table is
+ * insert-only; there is deliberately no `update()` method here at all,
+ * so immutability is enforced by the TypeScript interface itself, not
+ * merely by convention.
+ */
+export interface WeeklyReportRecord {
+  readonly reportId: UUID;
+  readonly periodStart: string;
+  readonly periodEnd: string;
+  readonly ledgerMode: string;
+  readonly reportVersion: number;
+  readonly status: string;
+  readonly generatedAt: string;
+  readonly generatedBy: string;
+  readonly sourceReference: Record<string, unknown>;
+  readonly reportPayload: Record<string, unknown>;
+  readonly supersedesReportId: UUID | undefined;
+  readonly supersededReason: string | undefined;
+  readonly idempotencyKey: string;
+  readonly createdAt: string;
+}
+
+export interface NewWeeklyReportInput {
+  readonly periodStart: string;
+  readonly periodEnd: string;
+  readonly ledgerMode: string;
+  readonly reportVersion: number;
+  readonly generatedBy: string;
+  readonly sourceReference: Record<string, unknown>;
+  readonly reportPayload: Record<string, unknown>;
+  readonly supersedesReportId?: UUID;
+  readonly supersededReason?: string;
+  readonly idempotencyKey: string;
+}
+
+function rowToWeeklyReport(row: WeeklyReportRow): WeeklyReportRecord {
+  return {
+    reportId: row.report_id as UUID,
+    periodStart: row.period_start,
+    periodEnd: row.period_end,
+    ledgerMode: row.ledger_mode,
+    reportVersion: row.report_version,
+    status: row.status,
+    generatedAt: row.generated_at,
+    generatedBy: row.generated_by,
+    sourceReference: row.source_reference,
+    reportPayload: row.report_payload,
+    supersedesReportId: (row.supersedes_report_id as UUID | null) ?? undefined,
+    supersededReason: row.superseded_reason ?? undefined,
+    idempotencyKey: row.idempotency_key,
+    createdAt: row.created_at,
+  };
+}
+
+export class SupabaseWeeklyReportsRepository {
+  constructor(private readonly client: SupabaseClient) {}
+
+  async create(input: NewWeeklyReportInput): Promise<WeeklyReportRecord> {
+    const { data, error } = await this.client
+      .from("weekly_reports")
+      .insert({
+        period_start: input.periodStart,
+        period_end: input.periodEnd,
+        ledger_mode: input.ledgerMode,
+        report_version: input.reportVersion,
+        status: "FINALIZED",
+        generated_by: input.generatedBy,
+        source_reference: input.sourceReference,
+        report_payload: input.reportPayload,
+        supersedes_report_id: input.supersedesReportId ?? null,
+        superseded_reason: input.supersededReason ?? null,
+        idempotency_key: input.idempotencyKey,
+      })
+      .select("*")
+      .single();
+    if (error || !data) {
+      throw new InternalError({ message: "Failed to create weekly report.", code: "WEEKLY_REPORT_CREATE_FAILED", context: { reason: error?.message } });
+    }
+    return rowToWeeklyReport(data as WeeklyReportRow);
+  }
+
+  async findByIdempotencyKey(idempotencyKey: string): Promise<WeeklyReportRecord | undefined> {
+    const { data, error } = await this.client.from("weekly_reports").select("*").eq("idempotency_key", idempotencyKey).maybeSingle();
+    if (error || !data) return undefined;
+    return rowToWeeklyReport(data as WeeklyReportRow);
+  }
+
+  async findById(reportId: UUID): Promise<WeeklyReportRecord | undefined> {
+    const { data, error } = await this.client.from("weekly_reports").select("*").eq("report_id", reportId).maybeSingle();
+    if (error || !data) return undefined;
+    return rowToWeeklyReport(data as WeeklyReportRow);
+  }
+
+  /** The current (highest-version) report for a period+ledger_mode — `undefined` if none has ever been generated. */
+  async findCurrentForPeriod(periodStart: string, periodEnd: string, ledgerMode: string): Promise<WeeklyReportRecord | undefined> {
+    const { data, error } = await this.client
+      .from("weekly_reports")
+      .select("*")
+      .eq("period_start", periodStart)
+      .eq("period_end", periodEnd)
+      .eq("ledger_mode", ledgerMode)
+      .order("report_version", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data) return undefined;
+    return rowToWeeklyReport(data as WeeklyReportRow);
+  }
+
+  async listRecent(limit: number): Promise<readonly WeeklyReportRecord[]> {
+    const { data, error } = await this.client.from("weekly_reports").select("*").order("generated_at", { ascending: false }).limit(limit);
+    if (error || !data) return [];
+    return (data as readonly WeeklyReportRow[]).map(rowToWeeklyReport);
+  }
+}
+
+/**
+ * Real, Supabase-backed repository for the Section 08 `performance_ledger`
+ * table — Section 08 itself never wrote one (see `OPEN_QUESTIONS.md`
+ * #25's sibling gap: `PerformanceAgent` only ever computed
+ * `PerformanceLedgerEntry` in memory). This is pure persistence over an
+ * ALREADY-REAL, already-tested aggregation (`buildPerformanceLedgerEntry()`,
+ * `@sport-os/settlement-engine`) — never a second aggregation algorithm.
+ */
+function rowToPerformanceLedgerEntry(row: PerformanceLedgerRow): PerformanceLedgerEntry {
+  return {
+    periodStart: row.period_start,
+    periodEnd: row.period_end,
+    ledgerMode: row.ledger_mode as PerformanceLedgerEntry["ledgerMode"],
+    sport: row.sport,
+    league: row.league ?? undefined,
+    market: row.market ?? undefined,
+    modelVersion: row.model_version ?? undefined,
+    decisionPolicyVersion: row.decision_policy_version ?? undefined,
+    ticketType: row.ticket_type ?? undefined,
+    ticketCount: row.ticket_count,
+    legCount: row.leg_count,
+    executedTicketCount: row.executed_ticket_count,
+    settledTicketCount: row.settled_ticket_count,
+    wins: row.wins,
+    losses: row.losses,
+    voids: row.voids,
+    pushes: row.pushes,
+    pending: row.pending,
+    actualStake: row.actual_stake_amount !== null && row.actual_stake_currency !== null ? { amount: row.actual_stake_amount, currency: row.actual_stake_currency } : null,
+    actualPayout: row.actual_payout_amount !== null && row.actual_payout_currency !== null ? { amount: row.actual_payout_amount, currency: row.actual_payout_currency } : null,
+    actualPnl: row.actual_pnl_amount !== null && row.actual_pnl_currency !== null ? { amount: row.actual_pnl_amount, currency: row.actual_pnl_currency } : null,
+    roi: row.roi,
+    expectedEv: row.expected_ev,
+    maxDrawdown: row.max_drawdown,
+    longestLosingStreak: row.longest_losing_streak,
+    sampleSize: row.sample_size,
+  };
+}
+
+export class SupabasePerformanceLedgerRepository {
+  constructor(private readonly client: SupabaseClient) {}
+
+  /** Upserts on the table's own dimension-tuple unique index — a re-run snapshot for the same (period, mode, sport, league, market, model, policy, ticketType) REPLACES the prior row, never duplicates it (mirrors the table's own doc comment: "recomputing and replacing a row... is an application-layer upsert responsibility"). */
+  /**
+   * The table's own dimension-tuple unique index cannot be relied on for
+   * `.upsert()`'s `onConflict` here: Postgres treats every NULL as
+   * distinct, so two rows that both have (say) `league = null` never
+   * collide on that index — exactly the gap the table's own migration
+   * comment calls out ("recomputing and replacing a row for the same
+   * dimension tuple is an application-layer upsert responsibility").
+   * This does that explicitly: find the row matching every dimension
+   * (treating an `undefined` dimension as "must also be NULL," never
+   * "any"), then UPDATE it if found, INSERT otherwise — never both.
+   */
+  async upsert(entry: PerformanceLedgerEntry): Promise<void> {
+    const payload = {
+      period_start: entry.periodStart,
+      period_end: entry.periodEnd,
+      ledger_mode: entry.ledgerMode,
+      sport: entry.sport,
+      league: entry.league ?? null,
+      market: entry.market ?? null,
+      model_version: entry.modelVersion ?? null,
+      decision_policy_version: entry.decisionPolicyVersion ?? null,
+      ticket_type: entry.ticketType ?? null,
+      ticket_count: entry.ticketCount,
+      leg_count: entry.legCount,
+      executed_ticket_count: entry.executedTicketCount,
+      settled_ticket_count: entry.settledTicketCount,
+      wins: entry.wins,
+      losses: entry.losses,
+      voids: entry.voids,
+      pushes: entry.pushes,
+      pending: entry.pending,
+      actual_stake_amount: entry.actualStake?.amount ?? null,
+      actual_stake_currency: entry.actualStake?.currency ?? null,
+      actual_payout_amount: entry.actualPayout?.amount ?? null,
+      actual_payout_currency: entry.actualPayout?.currency ?? null,
+      actual_pnl_amount: entry.actualPnl?.amount ?? null,
+      actual_pnl_currency: entry.actualPnl?.currency ?? null,
+      roi: entry.roi,
+      expected_ev: entry.expectedEv ?? null,
+      max_drawdown: entry.maxDrawdown,
+      longest_losing_streak: entry.longestLosingStreak,
+      sample_size: entry.sampleSize,
+      computed_at: new Date().toISOString(),
+    };
+
+    let existingQuery = this.client
+      .from("performance_ledger")
+      .select("id")
+      .eq("period_start", entry.periodStart)
+      .eq("period_end", entry.periodEnd)
+      .eq("ledger_mode", entry.ledgerMode)
+      .eq("sport", entry.sport);
+    for (const [column, value] of [
+      ["league", entry.league],
+      ["market", entry.market],
+      ["model_version", entry.modelVersion],
+      ["decision_policy_version", entry.decisionPolicyVersion],
+      ["ticket_type", entry.ticketType],
+    ] as const) {
+      existingQuery = value === undefined ? existingQuery.is(column, null) : existingQuery.eq(column, value);
+    }
+    const { data: existing, error: findError } = await existingQuery.maybeSingle();
+    if (findError) {
+      throw new InternalError({ message: "Failed to look up existing performance ledger entry.", code: "PERFORMANCE_LEDGER_LOOKUP_FAILED", context: { reason: findError.message } });
+    }
+
+    const { error } = existing ? await this.client.from("performance_ledger").update(payload).eq("id", existing.id as string) : await this.client.from("performance_ledger").insert(payload);
+    if (error) {
+      throw new InternalError({ message: "Failed to upsert performance ledger entry.", code: "PERFORMANCE_LEDGER_UPSERT_FAILED", context: { reason: error.message } });
+    }
+  }
+
+  async listForPeriod(periodStart: string, periodEnd: string, ledgerMode: string): Promise<readonly PerformanceLedgerEntry[]> {
+    const { data, error } = await this.client.from("performance_ledger").select("*").eq("period_start", periodStart).eq("period_end", periodEnd).eq("ledger_mode", ledgerMode);
+    if (error || !data) return [];
+    return (data as readonly PerformanceLedgerRow[]).map(rowToPerformanceLedgerEntry);
   }
 }

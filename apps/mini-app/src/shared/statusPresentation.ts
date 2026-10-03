@@ -143,6 +143,24 @@ export function describeMatchStatus(status: string): StatusPresentation {
   }
 }
 
+/** Section 11's job state machine (QUEUED/RUNNING/SUCCEEDED/FAILED/CANCELLED) — distinct from `describeTicketStatus`/`describeExecutionStatus`, a different enum entirely. */
+export function describeJobStatus(status: string): StatusPresentation {
+  switch (status) {
+    case "QUEUED":
+      return { label: "Queued", tone: "neutral" };
+    case "RUNNING":
+      return { label: "Running", tone: "info" };
+    case "SUCCEEDED":
+      return { label: "Succeeded", tone: "success" };
+    case "FAILED":
+      return { label: "Failed", tone: "danger" };
+    case "CANCELLED":
+      return { label: "Cancelled", tone: "neutral" };
+    default:
+      return { label: status, tone: "neutral" };
+  }
+}
+
 export function describeLicenseStatus(status: string): StatusPresentation {
   switch (status) {
     case "trial":

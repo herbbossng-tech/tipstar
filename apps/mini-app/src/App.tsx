@@ -1,5 +1,8 @@
 import { Route, Routes } from "react-router-dom";
 import { AccountPage } from "./account/AccountPage.js";
+import { AdminHome } from "./admin/AdminHome.js";
+import { AdminJobsPage } from "./admin/AdminJobsPage.js";
+import { AdminReportsPage } from "./admin/AdminReportsPage.js";
 import { AviatorPage } from "./aviator/AviatorPage.js";
 import { FixtureDetailPage } from "./football/FixtureDetailPage.js";
 import { FootballPage } from "./football/FootballPage.js";
@@ -23,6 +26,9 @@ export function App(): JSX.Element {
           <Route path="/aviator" element={<AviatorPage />} />
           <Route path="/performance" element={<PerformancePage />} />
           <Route path="/account" element={<AccountPage />} />
+          <Route path="/admin" element={<AdminHome />} />
+          <Route path="/admin/jobs" element={<AdminJobsPage />} />
+          <Route path="/admin/reports" element={<AdminReportsPage />} />
         </Routes>
       </Layout>
     </AuthBoundary>

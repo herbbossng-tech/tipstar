@@ -524,6 +524,59 @@ REPORTING / PERFORMANCE (derived only from real settled data, — real, Section 
   production bundle is unchanged in size from the Section 09 baseline
   (200.17 kB JS / 62.54 kB gzip) — zero Section 10 code reached it.
 
+## Section 11 boundaries
+
+- `packages/platform/src/operations/*` (license admin read/write
+  extensions, the OWNER/ADMIN authorization matrix, a read-only platform
+  settings snapshot, the pure `evaluateOperationalHealth()` function, and
+  the durable job protocol — `JobStatus`/`OperationalJobType`/
+  `OperationalJobsRepository`) and `packages/agents/src/jobs/*` +
+  `operations/agent-operations.ts` + `weekly-report-service.ts` (the
+  `OperationalJobWorker`, all four job handlers, and real weekly
+  reporting) are new. Three new Supabase Edge Functions
+  (`admin-overview`/`admin-jobs`/`admin-reports`), three new Mini App
+  admin screens, and four new OWNER/ADMIN-only bot commands
+  (`/admin`/`/adminjobs`/`/adminreports`/`/adminagents`) are the thin,
+  re-authorizing presentation layer over all of it. See
+  [`SECTION_11_OPERATIONS_ARCHITECTURE.md`](./SECTION_11_OPERATIONS_ARCHITECTURE.md),
+  [`LICENSE_ADMINISTRATION.md`](./LICENSE_ADMINISTRATION.md),
+  [`JOBS_AND_SCHEDULING.md`](./JOBS_AND_SCHEDULING.md),
+  [`WEEKLY_REPORTING.md`](./WEEKLY_REPORTING.md), and
+  [`OPERATIONS_SECURITY.md`](./OPERATIONS_SECURITY.md).
+- **Section 11 is an operations CONTROL PLANE, never a second domain
+  engine.** It adds no new football/Aviator prediction, feature, value,
+  market, risk, or settlement logic — `generateWeeklyReport()` only ever
+  reads the already-real `performance_ledger` (via the already-real
+  `buildPerformanceLedgerEntry()`, never a second aggregation), and
+  `TelegramReportPublicationJobHandler` dispatches a real
+  `AgentOrchestrator.dispatch()` COMMAND to the existing
+  `TelegramChannelManagementAgent` rather than calling the Telegram Bot
+  API directly.
+- **A durable, Postgres-backed job queue now exists** (`operational_jobs`,
+  claimed via `claim_next_operational_job()`'s `FOR UPDATE SKIP LOCKED`)
+  for exactly four job types: `WEEKLY_REPORT_GENERATION`,
+  `TELEGRAM_REPORT_PUBLICATION`, `PERFORMANCE_SNAPSHOT`, and
+  `OPERATIONAL_HEALTH_CHECK` — see `JOBS_AND_SCHEDULING.md`. This is new
+  infrastructure, not a change to Section 10's own synchronous
+  per-destination publishing loop, which is untouched.
+- **A job payload is never authorization.** `OperationalJobWorker` never
+  reads `job.payloadReference`/`job.createdBy` as a role/identity grant —
+  every handler resolves its own authorization independently, exactly
+  the pattern `PublishingAuthorizer` already established in Section 10.
+- 4 new migrations (`operations_enums`/`operational_jobs`/
+  `weekly_reports`/`operations_rls_policies`), OWNER/ADMIN-only RLS, no
+  public or `USING(true)` write policy anywhere — see
+  `tests/database/160_section11_rls_cases.sql` (19 cases, validated
+  against real PostgreSQL).
+- Known, explicitly documented limitations: no standalone deployed
+  process ever calls `OperationalJobWorker.runOnce()` on a schedule (the
+  worker/handlers are real and tested; nothing wires them into a running
+  loop yet); `PerformanceSnapshotJobHandler` only breaks out
+  `(ledgerMode, ticketType)`, not league/market/model/policy; the admin
+  Mini App ships Home/Jobs/Reports only, not the full
+  Licenses/Users/Agents/Audit/System screens the spec describes. See
+  `OPEN_QUESTIONS.md`.
+
 See also:
 - [`DECISION_ARCHITECTURE.md`](./DECISION_ARCHITECTURE.md)
 - [`VALUE_ENGINE.md`](./VALUE_ENGINE.md)
@@ -549,6 +602,11 @@ See also:
 - [`TELEGRAM_DESTINATIONS.md`](./TELEGRAM_DESTINATIONS.md)
 - [`PUBLISHING_POLICY.md`](./PUBLISHING_POLICY.md)
 - [`TELEGRAM_SECURITY.md`](./TELEGRAM_SECURITY.md)
+- [`SECTION_11_OPERATIONS_ARCHITECTURE.md`](./SECTION_11_OPERATIONS_ARCHITECTURE.md)
+- [`LICENSE_ADMINISTRATION.md`](./LICENSE_ADMINISTRATION.md)
+- [`JOBS_AND_SCHEDULING.md`](./JOBS_AND_SCHEDULING.md)
+- [`WEEKLY_REPORTING.md`](./WEEKLY_REPORTING.md)
+- [`OPERATIONS_SECURITY.md`](./OPERATIONS_SECURITY.md)
 - [`DATABASE_AND_RLS.md`](./DATABASE_AND_RLS.md)
 - [`LICENSING.md`](./LICENSING.md)
 - [`AUTHORIZATION.md`](./AUTHORIZATION.md)

@@ -106,6 +106,8 @@ export interface TelegramDestination {
   /** Optional so existing Section 01/06 callers/tests that construct a `TelegramDestination` literal without it remain valid (§10 is additive) — a destination with no explicit status is treated as UNVERIFIED by every Section 10 check, never as VERIFIED by omission. */
   readonly verificationStatus?: TelegramDestinationVerificationStatus;
   readonly verifiedAt?: ISODateString | undefined;
+  /** Section 11 addition — the admin user id that created this destination, for per-user usage reporting (`license-admin.ts`'s `inspectUserForAdmin`). Optional for the same additive reason as `verificationStatus` above. */
+  readonly createdBy?: string;
 }
 
 /** The kinds of content the Publishing Policy Engine decides whether to publish. Additive Section 10 value: PICK (an individual pick card, distinct from a full TICKET — see §16). */
