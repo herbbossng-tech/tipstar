@@ -19,6 +19,17 @@ declare global {
     readonly start_param?: string;
   }
 
+  /** Telegram's theme palette (Section 09 §38) — every field is optional because older clients/platforms may not populate all of them; the Mini App must always have a usable fallback (see `styles.css`'s own `:root` defaults, never overwritten unless a real value is present). */
+  interface TelegramWebAppThemeParams {
+    readonly bg_color?: string;
+    readonly text_color?: string;
+    readonly hint_color?: string;
+    readonly link_color?: string;
+    readonly button_color?: string;
+    readonly button_text_color?: string;
+    readonly secondary_bg_color?: string;
+  }
+
   interface TelegramWebApp {
     readonly initData: string;
     /**
@@ -32,6 +43,7 @@ declare global {
     readonly version: string;
     readonly platform: string;
     readonly colorScheme: "light" | "dark";
+    readonly themeParams: TelegramWebAppThemeParams;
     ready(): void;
     expand(): void;
     close(): void;

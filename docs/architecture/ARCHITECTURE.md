@@ -47,7 +47,12 @@ implements an execution path that bypasses it.
 
 ```
 apps/
-├── mini-app/            Telegram Mini App (React + Vite + TS) — structural shell only
+├── mini-app/            Telegram Mini App (React + Vite + TS) — real command-center UI
+│                        as of Section 09: Home/Football/Tickets/Aviator/Performance/
+│                        Account screens, a typed API client, 5 new read-only Supabase
+│                        Edge Functions it calls (see "Section 09 boundaries" below).
+│                        Presentation/read layer only — never the licensing, auth,
+│                        prediction, decision, risk, settlement, or execution authority
 └── bot/                 Telegram Bot (grammy) — onboarding only, no automated publishing
 
 packages/
@@ -409,9 +414,10 @@ REPORTING / PERFORMANCE (derived only from real settled data, — real, Section 
   no live path yet by which a real `PROVIDER` payout is ever produced.
   No FX conversion layer exists either (question #23) — multi-currency
   performance stays strictly separated, never summed.
-- No Telegram publishing, no weekly report UI, no Mini App dashboard, no
-  new agent framework, no new bookmaker integration, no new licensing
-  architecture — Sections 09/10/11 remain untouched.
+- No Telegram publishing, no weekly report UI, no new agent framework,
+  no new bookmaker integration, no new licensing architecture — Sections
+  10/11 remain untouched. (The Mini App dashboard itself is now real —
+  see "Section 09 boundaries" below.)
 - 6 new migrations (`settlements`/`settlement_legs`/
   `settlement_revisions`/`performance_ledger`/`backtest_runs`/
   `backtest_results` + their enums/RLS policies), admin-only RLS,
@@ -421,6 +427,49 @@ REPORTING / PERFORMANCE (derived only from real settled data, — real, Section 
   rather than duplicating lineage columns. See
   `tests/database/120_section08_rls_cases.sql` (28 tests, validated
   against real PostgreSQL).
+
+## Section 09 boundaries
+
+- `apps/mini-app` now has a real command-center UI — six screens (Home,
+  Football + fixture detail, Tickets + ticket detail, Aviator,
+  Performance, Account), a typed API client, and 5 new read-only
+  Supabase Edge Functions (`supabase/functions/football-fixtures`/
+  `football-fixture-detail`/`tickets`/`ticket-detail`/
+  `performance-summary`) built on top of every boundary above — see
+  [`MINI_APP_ARCHITECTURE.md`](./MINI_APP_ARCHITECTURE.md),
+  [`MINI_APP_SECURITY.md`](./MINI_APP_SECURITY.md),
+  [`MINI_APP_DATA_CONTRACTS.md`](./MINI_APP_DATA_CONTRACTS.md), and
+  [`MINI_APP_UX.md`](./MINI_APP_UX.md) for the full design.
+- **The Mini App is presentation only** — it is never the licensing,
+  authentication, prediction, value, decision, risk, settlement,
+  financial, or execution authority. No domain value (probability, EV,
+  fair odds, risk approval, settlement outcome, P&L) is ever computed in
+  React; every figure is read verbatim from a real backend row.
+  `apps/mini-app/src/security.test.ts` structurally enforces that no raw
+  `fetch()` call bypasses the one centralized API client anywhere in the
+  Mini App source.
+- **UI gating is NOT authorization** — every new edge function
+  independently re-verifies session + license + entitlement
+  (`supabase/functions/_shared/auth.ts`) before querying anything; a
+  client-side `hasEntitlement()` check only ever decides what to render.
+- No ticket-creation or execution-confirmation write path was built — no
+  Supabase repository persists `tickets`/`execution_requests`/
+  `execution_results` yet (see `OPEN_QUESTIONS.md` #25), so building a
+  write endpoint now would have meant inventing new persistence/business
+  logic outside this section's UI-only scope. The Mini App's Ticket
+  Center is therefore a pure read surface.
+- No real Aviator data UI was built either — no Aviator signal/round/
+  Double Bet persistence exists anywhere in this codebase (see
+  `OPEN_QUESTIONS.md` #26); `AviatorPage` renders an honest "Aviator
+  unavailable" empty state rather than inventing a signals table.
+- No Telegram publishing, no weekly report UI, no owner/admin operations
+  console, no new agent framework, no new bookmaker integration, no new
+  licensing architecture — Sections 10/11 remain untouched.
+- No new database migrations — every new edge function queries the
+  already-real Section 04/05/07/08 schema via a service-role client;
+  no RLS policy was added, changed, or weakened. `./tests/database/
+  run.sh` (156 test markers across all prior sections' suites) remains
+  green.
 
 See also:
 - [`DECISION_ARCHITECTURE.md`](./DECISION_ARCHITECTURE.md)
@@ -432,6 +481,10 @@ See also:
 - [`FINANCIAL_ACCOUNTING.md`](./FINANCIAL_ACCOUNTING.md)
 - [`PERFORMANCE_ARCHITECTURE.md`](./PERFORMANCE_ARCHITECTURE.md)
 - [`BACKTESTING_ARCHITECTURE.md`](./BACKTESTING_ARCHITECTURE.md)
+- [`MINI_APP_ARCHITECTURE.md`](./MINI_APP_ARCHITECTURE.md)
+- [`MINI_APP_SECURITY.md`](./MINI_APP_SECURITY.md)
+- [`MINI_APP_DATA_CONTRACTS.md`](./MINI_APP_DATA_CONTRACTS.md)
+- [`MINI_APP_UX.md`](./MINI_APP_UX.md)
 - [`MODEL_VALIDATION.md`](./MODEL_VALIDATION.md)
 - [`FOOTBALL_DATA_ARCHITECTURE.md`](./FOOTBALL_DATA_ARCHITECTURE.md)
 - [`DATA_QUALITY.md`](./DATA_QUALITY.md)

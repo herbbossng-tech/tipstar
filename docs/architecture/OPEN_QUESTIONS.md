@@ -382,3 +382,57 @@ should resolve `decisionOdds`/`oddsTimestamp`/`closingOdds` directly from
 `OddsObservationsRepository`'s own point-in-time queries — never construct
 them any other way — so the leakage guard here has something real to
 check.
+
+## 25. No repository persists tickets/execution_requests/execution_results to Supabase — the Mini App's Ticket Center is read-only by necessity
+
+Discovered building Section 09's Ticket Center. `packages/agents/src/
+db/repositories.ts` (Section 06) implements real Supabase-backed
+persistence for exactly two tables — `agent_invocations`/
+`agent_messages` — and nothing since has added one for `tickets`/
+`ticket_legs`/`decisions`/`risk_evaluations`/`execution_requests`/
+`execution_results`/`settlements`/`performance_ledger`/`backtest_runs`
+(Sections 07/08 built the real schema, RLS, and pure TypeScript engines
+for all of these, but never a repository that writes them to Supabase —
+every row in those tables today comes only from `tests/database/
+*_fixtures.sql`). **Consequence:** Section 09's `tickets`/`ticket-detail`
+edge functions are genuinely correct queries over a real (if currently
+empty in production) schema — but a "Confirm execution" write action
+could not be built without first building that missing repository layer,
+which is new persistence/business logic outside Section 09's UI-only
+scope (see MINI_APP_SECURITY.md's "What was not built"). **Next decision
+point:** before any Mini App write action (ticket creation, execution
+confirmation) can be implemented, a Section 07/08-aligned Supabase
+repository layer for these tables needs to exist — informed by whichever
+section actually wires agents to real persistence, not invented
+speculatively in the UI layer.
+
+## 26. Aviator has no signal/round/Double Bet persistence — the Mini App's Aviator screen is honestly empty
+
+`aviator-engine`'s `signal-engine.ts` (`AviatorSignalState`) and
+`double-bet.ts` (`DoubleBetRecord`, real Section 06 settlement
+arithmetic) are pure, real TypeScript computation with **no backing
+database table anywhere in this codebase** — confirmed by grepping every
+migration file for "aviator"/"double_bet"/"signal" (none exist beyond
+enum/FK references). `GlobalDailyRiskController` (Section 01, real) is
+equally in-memory-only. **Consequence:** Section 09's `AviatorPage`
+cannot query real signal/round/daily-risk history because none is ever
+persisted — it renders an honest "Aviator unavailable" empty state
+(entitlement-gated) rather than inventing a signals table, per the
+spec's own explicit stop condition. **Next decision point:** before a
+real Aviator Command Center UI can exist, a section needs to design and
+build `aviator_signals`/`aviator_rounds`/`aviator_daily_risk_snapshots`
+(or equivalent) persistence — no section has been assigned this yet
+(see `MODULE_BOUNDARIES.md`'s "What's explicitly deferred").
+
+## 27. No competition-list endpoint exists for the Football screen's filter
+
+`GET /football-fixtures` accepts a `competitionId` query param, but no
+endpoint lists the real competitions a caller could filter by — building
+one is a small, well-scoped addition (a single `SELECT DISTINCT`-shaped
+query over `competitions`), deliberately left out of Section 09's initial
+five endpoints per "only implement endpoints actually required" (§46);
+the date-only filter already makes the fixture list usable. **Next
+decision point:** add `GET /football-competitions` (or fold a
+competition list into `/football-fixtures`'s response) when a real UI
+need (a populated dropdown, not just a raw text/UUID filter) justifies
+it.

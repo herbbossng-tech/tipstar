@@ -318,6 +318,56 @@ reporting, and backtesting simulation* — never Telegram publishing
 [`BACKTESTING_ARCHITECTURE.md`](./BACKTESTING_ARCHITECTURE.md) for the
 full design.
 
+## Mini App Command Center Boundary (Section 09)
+
+`apps/mini-app` and 5 new `supabase/functions/*` edge functions
+(`football-fixtures`/`football-fixture-detail`/`tickets`/
+`ticket-detail`/`performance-summary`) are real, built as a pure
+**presentation and read layer** on top of every boundary above — it is
+never itself the licensing/authentication/prediction/value/decision/
+risk/settlement/financial/execution authority (Section 09's own
+explicit list of what it is NOT):
+
+- **API client + view models** — `services/api.ts`'s `authedGet`/
+  `buildQueryString`, `api/types.ts`'s locally-defined, byte-identical-
+  enum view models (mirroring `auth/types.ts`'s precedent — server
+  packages are never imported into the browser bundle).
+- **6 screens** — Home, Football (+ fixture detail), Tickets (+ ticket
+  detail), Aviator, Performance, Account — replacing Section 01's
+  structural placeholders, all reading real Section 04/05/07/08 data,
+  none computing a domain value themselves.
+- **`useQuery`** — the one data-fetching primitive (loading/error/
+  success, race-condition-safe via a generation counter, `refetch()`).
+- **Shared component library** — `StatusBadge`/`EmptyState`/
+  `QueryErrorState`/`LoadingState`/`LicenseCard`/`FixtureCard`/
+  `ValueCard`/`DecisionBadge`/`TicketCard`/`TicketLegRow`/
+  `PerformanceMetric`, backed by two pure logic modules
+  (`statusPresentation.ts`, `format.ts`).
+- **Telegram theme integration** — `useTelegramTheme()` applies real
+  `colorScheme`/`themeParams` as CSS custom properties, falling back to
+  the existing `prefers-color-scheme` defaults outside Telegram.
+- **Every new edge function independently re-verifies** session +
+  license + entitlement (`supabase/functions/_shared/auth.ts`'s
+  `resolveAuthenticatedUser`/`requireEntitlement`) — UI-level
+  entitlement checks (`hasEntitlement()`) are a rendering convenience
+  only, never a security boundary.
+
+**What was deliberately not built**: ticket creation and assisted-
+execution confirmation (no Supabase repository persists `tickets`/
+`execution_requests`/`execution_results` yet — see `OPEN_QUESTIONS.md`
+#25) and a real Aviator data UI (no Aviator signal/round/Double Bet
+persistence exists anywhere in this codebase — see `OPEN_QUESTIONS.md`
+#26, and "Aviator + Double Bet Engine (Section 06)" above). Both are
+documented, not silently worked around.
+
+This boundary owns *presentation of already-computed state and read-only
+orchestration of authorized requests* — never Telegram publishing
+(Section 10) and never owner/admin operations (Section 11). See
+[`MINI_APP_ARCHITECTURE.md`](./MINI_APP_ARCHITECTURE.md),
+[`MINI_APP_SECURITY.md`](./MINI_APP_SECURITY.md),
+[`MINI_APP_DATA_CONTRACTS.md`](./MINI_APP_DATA_CONTRACTS.md), and
+[`MINI_APP_UX.md`](./MINI_APP_UX.md) for the full design.
+
 ## What's explicitly deferred to later sections
 
 - Value-selection policy math (`DecisionEngine.assess()`), ticket-level
