@@ -471,6 +471,59 @@ REPORTING / PERFORMANCE (derived only from real settled data, — real, Section 
   run.sh` (156 test markers across all prior sections' suites) remains
   green.
 
+## Section 10 boundaries
+
+- `apps/bot` (grammy) now has real, authenticated command routing, and
+  `packages/telegram`/`packages/agents` now have a real Bot API client,
+  Publishing Policy Engine, message template engine, destination
+  manager, and publishing authorizer, wired into the existing
+  `TelegramChannelManagementAgent` — see
+  [`TELEGRAM_PUBLISHING_ARCHITECTURE.md`](./TELEGRAM_PUBLISHING_ARCHITECTURE.md),
+  [`TELEGRAM_DESTINATIONS.md`](./TELEGRAM_DESTINATIONS.md),
+  [`PUBLISHING_POLICY.md`](./PUBLISHING_POLICY.md), and
+  [`TELEGRAM_SECURITY.md`](./TELEGRAM_SECURITY.md) for the full design.
+- **Telegram is DISTRIBUTION, never DECISION/RISK/EXECUTION/SETTLEMENT**
+  — the Channel Agent decides WHERE/WHEN/HOW/WHICH destination, never
+  WHAT the prediction/odds/value should be, WHETHER to execute, WHETHER
+  it won, or WHAT the payout is. `finalizedText` is passed to Telegram
+  byte-for-byte; no field on the agent's input type could be used to
+  alter a probability/odds/stake/selection/execution/settlement value.
+- **Publishing idempotency is a real Postgres unique index**, not an
+  application-level key — `telegram_publications_natural_key_idx` on
+  `(source_type, source_id, source_version, publication_type,
+  destination_id)`. A retried publish for the same tuple returns the
+  same row and never sends a second Telegram message.
+- **No second `GlobalExecutionGate`** — `PublishingAuthorizer`
+  (`packages/agents/src/publishing-authorizer.ts`) reuses the exact same
+  identity/license/entitlement `GateCheck` factories the real gate is
+  built from, as a wholly separate class, never wrapping or
+  constructing a second instance of the gate itself.
+- A destination is never marked VERIFIED without a real, successful
+  `TelegramService.getChat()` call — "store an explicit
+  unverified/incomplete state rather than pretending success."
+  Destination mutations are OWNER/ADMIN-gated, both at the application
+  layer (`requireAdmin()`) and at the database layer (no
+  `authenticated`-role write policy exists on `telegram_destinations`/
+  `telegram_publications` at all).
+- No bookmaker/exchange integration, no fabricated booking codes —
+  `BookingCodeInput`/`renderBookingCodeMessage()` render "BOOKING CODE
+  UNAVAILABLE" rather than deriving or guessing one; the Publishing
+  Policy Engine's `BOOKING_CODE_UNAVAILABLE` rejection code stops a
+  booking-code publication before it is even attempted.
+- No full admin ops console, no weekly report agent, no new football/
+  Aviator prediction or risk/settlement models — Section 11 remains
+  untouched. `/football`/`/tickets`/`/performance` bot commands
+  deep-link to the already-real Mini App rather than reimplementing
+  Section 09's queries a third time (see `OPEN_QUESTIONS.md` #29);
+  `/aviator` stays honestly unavailable (#26, unresolved).
+- 4 new migrations (`telegram_enums`/`telegram_destinations`/
+  `telegram_publications`/`telegram_rls_policies`), admin-only RLS,
+  `service_role` write-only — no existing RLS policy from any prior
+  section was weakened. See `tests/database/140_section10_rls_cases.sql`
+  (18 tests, validated against real PostgreSQL). The Mini App's
+  production bundle is unchanged in size from the Section 09 baseline
+  (200.17 kB JS / 62.54 kB gzip) — zero Section 10 code reached it.
+
 See also:
 - [`DECISION_ARCHITECTURE.md`](./DECISION_ARCHITECTURE.md)
 - [`VALUE_ENGINE.md`](./VALUE_ENGINE.md)
@@ -492,6 +545,10 @@ See also:
 - [`MODULE_BOUNDARIES.md`](./MODULE_BOUNDARIES.md)
 - [`OPEN_QUESTIONS.md`](./OPEN_QUESTIONS.md)
 - [`TELEGRAM_AUTHENTICATION.md`](./TELEGRAM_AUTHENTICATION.md)
+- [`TELEGRAM_PUBLISHING_ARCHITECTURE.md`](./TELEGRAM_PUBLISHING_ARCHITECTURE.md)
+- [`TELEGRAM_DESTINATIONS.md`](./TELEGRAM_DESTINATIONS.md)
+- [`PUBLISHING_POLICY.md`](./PUBLISHING_POLICY.md)
+- [`TELEGRAM_SECURITY.md`](./TELEGRAM_SECURITY.md)
 - [`DATABASE_AND_RLS.md`](./DATABASE_AND_RLS.md)
 - [`LICENSING.md`](./LICENSING.md)
 - [`AUTHORIZATION.md`](./AUTHORIZATION.md)

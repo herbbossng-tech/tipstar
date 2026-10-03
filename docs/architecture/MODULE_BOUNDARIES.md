@@ -368,6 +368,80 @@ orchestration of authorized requests* — never Telegram publishing
 [`MINI_APP_DATA_CONTRACTS.md`](./MINI_APP_DATA_CONTRACTS.md), and
 [`MINI_APP_UX.md`](./MINI_APP_UX.md) for the full design.
 
+## Telegram Bot, Multi-Channel Management & Automated Publishing Boundary (Section 10)
+
+`apps/bot` (grammy, real command routing), `packages/telegram`'s new
+Bot API client/policy engine/template engine, and
+`packages/agents`'s new destination manager/publishing authorizer are
+real, built as a pure **distribution layer** downstream of every
+boundary above. "Telegram is DISTRIBUTION. It is not DECISION/RISK/
+EXECUTION/SETTLEMENT" — this boundary decides WHERE/WHEN/HOW/WHICH
+destination a FINALIZED piece of content reaches, never WHAT the
+prediction/odds/value should be, WHETHER to execute, WHETHER it won, or
+WHAT the payout is:
+
+- **`TelegramBotApiService`** (`packages/telegram/src/service.ts`) — the
+  one server-only Bot API client (`sendMessage`/`replyToMessage`/
+  `getChat`/`getChatMember`), with real error categorization
+  (`telegram-errors.ts`), bounded retry/backoff, and per-attempt
+  timeout.
+- **Publishing Policy Engine** (`packages/telegram/src/policy-engine.ts`)
+  — `evaluatePublicationPolicy()` extends (never duplicates)
+  Section 06's `evaluatePublishingPolicy()` with markets/leagues/data-
+  quality/model-agreement/daily-limit/publication-window checks, every
+  field sourced from a real existing backend field (`FeatureQuality`,
+  `TicketRiskLimits.minimumModelAgreementRatio`) — there is no
+  "confidence" field anywhere in this policy.
+- **Message template engine** (`packages/telegram/src/templates.ts`) —
+  pure, deterministic, HTML-escaped renderers for pick/ticket/booking-
+  code/result/performance messages; an accumulator is rendered as ONE
+  message with N numbered legs, never N separate messages; a NULL
+  financial field renders as "Not available," never coerced to zero.
+- **Destination manager** (`packages/agents/src/destination-manager.ts`)
+  — OWNER/ADMIN-gated `createDestination`/`verifyDestination`/
+  `updateDestinationSettings`/`disableDestination`/`listDestinations`/
+  `getDestination`, mirroring `packages/platform/src/user-admin.ts`'s
+  exact pattern; a destination starts UNVERIFIED and only a real
+  `getChat` success ever marks it VERIFIED.
+- **`PublishingAuthorizer`** (`packages/agents/src/publishing-
+  authorizer.ts`) — a wholly separate class from `GlobalExecutionGate`,
+  reusing its identity/license/entitlement `GateCheck` factories without
+  ever constructing a second gate; this is what `AgentOrchestrator`
+  calls before `TelegramChannelManagementAgent.execute()` ever runs.
+- **`TelegramChannelManagementAgent`** (extended, not replaced) —
+  durable per-destination idempotency via `TelegramPublicationsRepository`
+  (a database-enforced natural-key unique index, not an in-memory key),
+  RESULTS-publication reply-to-original (§22), and multi-destination
+  fanout where one destination's failure never marks another as failed.
+- **Bot command routing** (`apps/bot/src/bot.ts`/`commands/handlers.ts`)
+  — `Update -> Parser -> Authenticated Context -> Authorization ->
+  Domain Service -> Response Renderer`; every command resolves identity
+  from grammy's own `ctx.from` only (Telegram's own update delivery is
+  the trust boundary here), never from a command argument; `/football`/
+  `/tickets`/`/performance` deep-link to the Mini App rather than
+  reimplementing Section 09's queries a third time; `/aviator` gives the
+  same honest unavailability the Mini App gives (`OPEN_QUESTIONS.md`
+  #26, still unresolved).
+
+**What was deliberately not built**: a publication job queue (publishing
+is synchronous per destination; bounded retry happens inline inside
+`TelegramBotApiService` — see `TELEGRAM_PUBLISHING_ARCHITECTURE.md`'s
+"Why no job queue"), inline callback buttons (only URL buttons exist, so
+there is no callback-query attack surface to defend), a real bookmaker
+booking-code integration (booking codes remain downstream-only, per
+`OPEN_QUESTIONS.md`), and a full admin ops console (only the destination-
+management capabilities Section 10 itself needs were built — see
+`OPEN_QUESTIONS.md` #29 on why `/football`/`/tickets`/`/performance`
+deep-link instead of querying directly).
+
+This boundary owns *Telegram bot interaction, destination management,
+and publication of already-finalized content* — never prediction,
+decision, risk, execution, settlement, or weekly reporting (Section 11).
+See [`TELEGRAM_PUBLISHING_ARCHITECTURE.md`](./TELEGRAM_PUBLISHING_ARCHITECTURE.md),
+[`TELEGRAM_DESTINATIONS.md`](./TELEGRAM_DESTINATIONS.md),
+[`PUBLISHING_POLICY.md`](./PUBLISHING_POLICY.md), and
+[`TELEGRAM_SECURITY.md`](./TELEGRAM_SECURITY.md) for the full design.
+
 ## What's explicitly deferred to later sections
 
 - Value-selection policy math (`DecisionEngine.assess()`), ticket-level
@@ -384,15 +458,17 @@ orchestration of authorized requests* — never Telegram publishing
   settlement's `actualPayout`/`actualStake` remains `null` in practice
   until one exists), SportyBet automation, an FX conversion layer
   (multi-currency amounts stay strictly separated, never summed), and
-  Telegram publishing / weekly reporting of settlement results (Sections
-  10/11). All model/statistical/ML computation for Aviator (`aviator-
-  engine` — no section assigned yet).
+  weekly reporting of settlement results (Section 11 — Telegram
+  publishing itself is now real as of Section 10). All model/
+  statistical/ML computation for Aviator (`aviator-engine` — no section
+  assigned yet).
 - Real provider integrations (football data, odds — the adapter contract
   and pipeline are real as of Section 04, but no live credential exists;
   see `FOOTBALL_DATA_ARCHITECTURE.md`; Aviator data — untouched).
-- Persistence for Telegram destinations, Ticket publication, Reporting —
-  Identity and License persistence landed in Section 03; Settlement
-  persistence landed in Section 08; these remain open.
+- Persistence for Reporting (Section 11) — Identity and License
+  persistence landed in Section 03; Settlement persistence landed in
+  Section 08; Telegram destination/publication persistence landed in
+  Section 10; this remains open.
 - Real execution (any agent actually placing/confirming a wager) — the
   typed `ExecutionIntegration` boundary (`@sport-os/agents`, extended
   Section 07 with `validate()`/`status()`/`ExecutionResultStatus`) both

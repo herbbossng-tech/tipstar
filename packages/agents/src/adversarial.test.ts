@@ -6,7 +6,7 @@ import { GlobalExecutionGate, type GateCheck } from "@sport-os/platform";
 import { RiskControllerState } from "@sport-os/risk-engine";
 import type { Ticket } from "@sport-os/settlement-engine";
 import { PublishableContentType, TelegramDestinationType, type SendMessageResult, type TelegramDestinationManager, type TelegramService } from "@sport-os/telegram";
-import { ok } from "@sport-os/shared";
+import { err, IntegrationError, ok } from "@sport-os/shared";
 import { describe, expect, it } from "vitest";
 import { FOOTBALL_AUTOMATION_AGENT_DECLARATION, FootballAutomationAgent, FootballAutomationOutcome, FootballExecutionMode } from "./football/automation-agent.js";
 import { FOOTBALL_DECISION_AGENT_DECLARATION, FootballDecisionAgent } from "./football/decision-agent.js";
@@ -119,6 +119,8 @@ describe("§33 Adversarial tests", () => {
         return ok<SendMessageResult>({ messageId: 1 });
       },
       replyToMessage: async () => ok<SendMessageResult>({ messageId: 1 }),
+      getChat: async () => err(new IntegrationError({ message: "not used in this test" })),
+      getChatMember: async () => err(new IntegrationError({ message: "not used in this test" })),
     };
     const agent = new TelegramChannelManagementAgent({ destinations, telegram });
     agent.markReady();
@@ -197,6 +199,8 @@ describe("§33 Adversarial tests", () => {
         return ok<SendMessageResult>({ messageId: 1 });
       },
       replyToMessage: async () => ok<SendMessageResult>({ messageId: 1 }),
+      getChat: async () => err(new IntegrationError({ message: "not used in this test" })),
+      getChatMember: async () => err(new IntegrationError({ message: "not used in this test" })),
     };
     const agent = new TelegramChannelManagementAgent({ destinations, telegram });
     agent.markReady();

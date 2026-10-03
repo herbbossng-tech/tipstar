@@ -436,3 +436,69 @@ decision point:** add `GET /football-competitions` (or fold a
 competition list into `/football-fixtures`'s response) when a real UI
 need (a populated dropdown, not just a raw text/UUID filter) justifies
 it.
+
+## 28. Destination verification only confirms reachability (`getChat`), never a signed-off "the bot has posting rights" guarantee
+
+`verifyDestination()` (Section 10) calls `TelegramService.getChat()` to
+confirm the bot can reach the configured chat, then marks the
+destination VERIFIED or FAILED accordingly. It deliberately does NOT
+also call `getChatMember(chatId, botUserId)` to confirm the bot
+specifically holds posting/admin rights there, because this codebase
+has nowhere that resolves or stores the bot's own numeric Telegram user
+id (it would require a one-time `getMe` call this section never makes).
+A chat that is reachable via `getChat` but where the bot actually lacks
+posting permission would still be marked VERIFIED, and would only
+surface a real `BOT_PERMISSION` failure on its first actual publish
+attempt. **Next decision point:** if a stronger pre-flight guarantee is
+needed, resolve and persist the bot's own numeric id (via `getMe`) and
+extend `verifyDestination()` to also call `getChatMember()`.
+
+## 29. `/football`/`/tickets`/`/performance` bot commands deep-link to the Mini App rather than querying data directly
+
+Section 09 already built the real read-model query logic for this data
+as Deno edge functions, consumed by the React Mini App. `apps/bot` is a
+genuine Node process and technically *could* run the same kind of direct
+Supabase queries a third time — but doing so would mean three
+independent implementations of the same business logic (Deno edge
+functions, the React Mini App, and now a Node bot) with no shared code
+between them, risking silent drift. Section 10 instead gives these
+commands an honest, authenticated "open the Mini App" reply (with a URL
+button, omitted entirely when `TELEGRAM_MINI_APP_URL` is unset) rather
+than reimplementing the queries. `/aviator` is unaffected by this
+decision — it is honestly unavailable regardless, per #26. **Next
+decision point:** if genuine product demand emerges for real inline bot
+data (e.g. `/tickets` listing real tickets in-chat), extract a shared
+query layer both the edge functions and the bot can call, rather than
+writing a third independent implementation.
+
+## 30. No `publication_jobs` queue table — publishing is synchronous per destination
+
+Section 10's spec explicitly permits skipping a job queue "if synchronous
+handling is safe and the reasoning is documented." `TelegramChannelManagementAgent`
+publishes to each eligible destination in a sequential loop inside one
+`execute()` call, with bounded retry/backoff happening inline inside
+`TelegramBotApiService.call()` itself — there is no separate worker or
+`publication_jobs` table, and `TelegramPublicationStatus` is deliberately
+only four states (`PENDING`/`RETRYING`/`PUBLISHED`/`FAILED`), not the
+full textbook queue lifecycle. This is safe at the destination counts
+this product realistically has today. **Next decision point:** if
+destination counts grow large enough that sequential per-ticket
+publishing risks hitting Telegram's real rate limits, or if genuinely
+asynchronous/out-of-process retry becomes necessary, revisit this with a
+real job queue and worker — do not silently keep stretching the inline
+loop past the point this reasoning holds.
+
+## 31. `InMemoryLicensesRepository` doesn't merge entitlements — a pre-existing test-fake gap, not a Section 10 defect
+
+Writing `publishing-authorizer.test.ts` surfaced that
+`InMemoryLicensesRepository.insert()` (Section 03, `packages/platform/
+src/license.ts`) always stores an empty `entitlements` array and never
+merges with `InMemoryLicenseEntitlementsRepository` the way the real
+`SupabaseLicensesRepository.withEntitlements()` does. Section 10's own
+test had to construct a dedicated minimal `LicenseService` fake to
+exercise the entitlement-present path rather than relying on the
+in-memory repository pair. **Next decision point:** if more tests need
+an in-memory license-with-entitlements fixture, fix
+`InMemoryLicensesRepository`/`InMemoryLicenseEntitlementsRepository` to
+merge consistently with the real Supabase pair, rather than each new
+test inventing its own workaround.
