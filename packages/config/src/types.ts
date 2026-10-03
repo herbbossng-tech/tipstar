@@ -35,6 +35,12 @@ export interface AppConfig {
     readonly webhookSecret: string | undefined;
     readonly initDataMaxAgeSeconds: number;
     readonly initDataClockSkewSeconds: number;
+    /** Section 10 — bounded retry count for TRANSIENT/RATE_LIMITED Telegram Bot API failures. */
+    readonly publishRetryLimit: number;
+    /** Section 10 — per-attempt Telegram Bot API call timeout. */
+    readonly publishTimeoutMs: number;
+    /** Section 10 — the Mini App's own public URL, for "Open Mini App" buttons only. `undefined` means every caller omits the button rather than fabricating a link. */
+    readonly miniAppUrl: string | undefined;
   };
   readonly session: {
     /** Present only when loaded via loadServerConfig(). Never expose to the client bundle. */

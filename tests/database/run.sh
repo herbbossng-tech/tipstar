@@ -54,6 +54,9 @@ sudo -u postgres psql -q -d "$DB_NAME" -v ON_ERROR_STOP=1 -f "$TEST_DIR/90_secti
 echo "== Loading fixtures (settlement/performance/backtesting) =="
 sudo -u postgres psql -q -d "$DB_NAME" -v ON_ERROR_STOP=1 -f "$TEST_DIR/110_section08_fixtures.sql"
 
+echo "== Loading fixtures (Telegram publishing) =="
+sudo -u postgres psql -q -d "$DB_NAME" -v ON_ERROR_STOP=1 -f "$TEST_DIR/130_section10_fixtures.sql"
+
 echo "== Running RLS test suite: users/licenses (read the transcript below against each test's stated expectation) =="
 sudo -u postgres psql -d "$DB_NAME" -f "$TEST_DIR/20_rls_cases.sql"
 
@@ -71,3 +74,6 @@ sudo -u postgres psql -d "$DB_NAME" -f "$TEST_DIR/100_section07_rls_cases.sql"
 
 echo "== Running RLS test suite: settlement/performance/backtesting (read the transcript below against each test's stated expectation) =="
 sudo -u postgres psql -d "$DB_NAME" -f "$TEST_DIR/120_section08_rls_cases.sql"
+
+echo "== Running RLS test suite: Telegram publishing (read the transcript below against each test's stated expectation) =="
+sudo -u postgres psql -d "$DB_NAME" -f "$TEST_DIR/140_section10_rls_cases.sql"

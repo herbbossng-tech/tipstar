@@ -24,6 +24,13 @@ export function evaluatePublishingPolicy(destination: TelegramDestination, conte
   const flagByContentType: Record<PublishableContentType, boolean> = {
     [PublishableContentType.BOOKING_CODE]: destination.publishBookingCode,
     [PublishableContentType.TICKET]: destination.publishTicket,
+    // An individual pick card is governed by the same destination flag as
+    // a full ticket (§8's locked destination field list has no separate
+    // "publish_pick" flag, and inventing one would be an unrelated
+    // business field no section has asked for) — both are "prediction
+    // content" from this destination's point of view, as opposed to
+    // results/booking-code/weekly-report.
+    [PublishableContentType.PICK]: destination.publishTicket,
     [PublishableContentType.RESULTS]: destination.publishResults,
     [PublishableContentType.WEEKLY_REPORT]: destination.publishWeeklyReport,
   };

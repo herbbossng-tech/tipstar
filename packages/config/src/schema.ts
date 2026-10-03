@@ -42,6 +42,20 @@ export const envSchema = z
     // var behaves identically to calling validateInitData() with no options.
     TELEGRAM_INIT_DATA_MAX_AGE_SECONDS: z.coerce.number().int().positive().default(86400),
     TELEGRAM_INIT_DATA_CLOCK_SKEW_SECONDS: z.coerce.number().int().nonnegative().default(60),
+    // Section 10 — Telegram publishing tuning. Not secrets (never added
+    // to SERVER_ONLY_ENV_KEYS below), but server-only config: nothing in
+    // apps/mini-app ever publishes to Telegram, so there's no client
+    // config counterpart. Defaults mirror TelegramBotApiService's own
+    // defaults (see service.ts) so an unset var behaves identically to
+    // constructing it with no options.
+    TELEGRAM_PUBLISH_RETRY_LIMIT: z.coerce.number().int().nonnegative().default(2),
+    TELEGRAM_PUBLISH_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
+    // The Mini App's own public HTTPS URL (Section 10) — used ONLY to
+    // build "Open Mini App" inline URL buttons in bot replies/published
+    // messages. Optional and undefined by default: a bot/publication
+    // reply never fabricates this link — when unset, every caller omits
+    // the button entirely rather than guessing a URL.
+    TELEGRAM_MINI_APP_URL: optionalNonEmpty,
 
     // Stateless HMAC-signed session tokens (Section 02 — Session
     // Architecture; see docs/architecture/TELEGRAM_AUTHENTICATION.md).

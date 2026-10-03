@@ -48,6 +48,12 @@ class RecordingTelegramService implements TelegramService {
   async replyToMessage() {
     return err(new IntegrationError({ message: "not used" }));
   }
+  async getChat() {
+    return err(new IntegrationError({ message: "not used in this test" }));
+  }
+  async getChatMember() {
+    return err(new IntegrationError({ message: "not used in this test" }));
+  }
 }
 
 describe("TelegramChannelManagementAgent", () => {
