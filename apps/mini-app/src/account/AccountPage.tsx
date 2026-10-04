@@ -1,12 +1,73 @@
+import { useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
+import { bootstrapOwner } from "../auth/authApi.js";
 import { useAuthIdentity } from "../auth/AuthContext.js";
 import { useProfile } from "../auth/useProfile.js";
+import { ApiError } from "../services/api.js";
 import { EmptyState } from "../shared/EmptyState.js";
 import { LicenseCard } from "../shared/LicenseCard.js";
 import { LoadingState } from "../shared/LoadingState.js";
 import { QueryErrorState } from "../shared/QueryErrorState.js";
 import { StatusBadge } from "../shared/StatusBadge.js";
 import { formatDateTime } from "../shared/format.js";
+
+/**
+ * One-time owner claim (Section 03's `/owner-bootstrap`). No automatic
+ * "first user becomes owner" exists anywhere server-side — reaching
+ * OWNER requires the exact `OWNER_BOOTSTRAP_SECRET` value, which only
+ * ever lives server-side (never in this bundle). This form is the only
+ * way to reach that endpoint without a raw API call; it succeeds at
+ * most once ever, for whichever caller gets there first, and the
+ * server permanently disables the endpoint afterward.
+ */
+function OwnerBootstrapForm(): JSX.Element {
+  const { session } = useAuthIdentity();
+  const [secret, setSecret] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | undefined>(undefined);
+  const [succeeded, setSucceeded] = useState(false);
+
+  const handleSubmit = (event: FormEvent): void => {
+    event.preventDefault();
+    if (!secret) return;
+    setError(undefined);
+    setSubmitting(true);
+    bootstrapOwner(session.token, secret)
+      .then(() => {
+        setSubmitting(false);
+        setSucceeded(true);
+      })
+      .catch((caught: unknown) => {
+        setSubmitting(false);
+        setError(caught instanceof ApiError ? caught.message : "Could not claim owner access.");
+      });
+  };
+
+  if (succeeded) {
+    return <p className="card__meta">Owner access granted. Close and reopen the app to see it take effect.</p>;
+  }
+
+  return (
+    <div className="card">
+      <div className="card__header">
+        <span className="card__title">Claim owner access</span>
+      </div>
+      <p className="card__detail">One-time only — enter the OWNER_BOOTSTRAP_SECRET you set on the server.</p>
+      <form onSubmit={handleSubmit}>
+        <div className="field">
+          <label className="field__label" htmlFor="owner-bootstrap-secret">
+            Secret
+          </label>
+          <input id="owner-bootstrap-secret" className="field__input" type="password" value={secret} onChange={(event) => setSecret(event.target.value)} required />
+        </div>
+        <button type="submit" className="button" disabled={submitting || !secret}>
+          {submitting ? "Claiming…" : "Claim owner access"}
+        </button>
+      </form>
+      {error ? <QueryErrorState code="OWNER_BOOTSTRAP_FAILED" message={error} /> : null}
+    </div>
+  );
+}
 
 const ENTITLEMENT_LABELS: Readonly<Record<string, string>> = {
   football_analysis: "Football Analysis",
@@ -50,7 +111,9 @@ export function AccountPage(): JSX.Element {
         <Link to="/admin" className="button button--secondary">
           Admin
         </Link>
-      ) : null}
+      ) : (
+        <OwnerBootstrapForm />
+      )}
 
       {profileQuery.status === "loading" ? <LoadingState label="Loading your license…" /> : null}
       {profileQuery.status === "error" ? <QueryErrorState code={profileQuery.code} message={profileQuery.message} onRetry={profileQuery.refetch} /> : null}
