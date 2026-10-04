@@ -1,0 +1,6 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "npm run build --workspace=apps/mini-app",
+  "outputDirectory": "apps/mini-app/dist",
+  "installCommand": "npm ci"
+}
