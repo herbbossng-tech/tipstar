@@ -206,21 +206,41 @@ export function generateLicenseKey(): string {
 export class InMemoryLicensesRepository implements LicensesRepository {
   private readonly licenses = new Map<UUID, License & { readonly licenseKey: string }>();
 
+  /**
+   * Optional — mirrors `SupabaseLicensesRepository.withEntitlements()`'s
+   * real composition (OPEN_QUESTIONS.md #31, resolved for test fixtures
+   * that genuinely need it — e.g. Section 12's cross-package E2E chain
+   * tests). Additive and opt-in: omitting it keeps every existing
+   * caller's behavior byte-identical (entitlements stay `[]`, exactly
+   * as before this constructor parameter existed) — this never alters
+   * production authorization semantics, only what a test fixture can
+   * observe when it explicitly asks for the composition.
+   */
+  constructor(private readonly entitlementsRepository?: InMemoryLicenseEntitlementsRepository) {}
+
+  private async withEntitlements(license: License & { readonly licenseKey: string }): Promise<License> {
+    if (!this.entitlementsRepository) return license;
+    const entitlements = await this.entitlementsRepository.listEnabledForLicense(license.id as UUID);
+    return { ...license, entitlements };
+  }
+
   async getActiveOrTrialForUser(userId: UUID): Promise<License | undefined> {
     for (const license of this.licenses.values()) {
       if (license.userId === userId && (license.status === LicenseStatus.ACTIVE || license.status === LicenseStatus.TRIAL)) {
-        return license;
+        return this.withEntitlements(license);
       }
     }
     return undefined;
   }
 
   async getById(licenseId: UUID): Promise<License | undefined> {
-    return this.licenses.get(licenseId);
+    const license = this.licenses.get(licenseId);
+    return license ? this.withEntitlements(license) : undefined;
   }
 
   async listForUser(userId: UUID): Promise<readonly License[]> {
-    return [...this.licenses.values()].filter((license) => license.userId === userId);
+    const matches = [...this.licenses.values()].filter((license) => license.userId === userId);
+    return Promise.all(matches.map((license) => this.withEntitlements(license)));
   }
 
   async insert(input: NewLicenseInput): Promise<License> {
@@ -254,7 +274,7 @@ export class InMemoryLicensesRepository implements LicensesRepository {
       expiresAt: patch.expiresAt !== undefined ? patch.expiresAt : existing.expiresAt,
     };
     this.licenses.set(licenseId, updated);
-    return updated;
+    return this.withEntitlements(updated);
   }
 }
 

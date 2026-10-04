@@ -14,16 +14,37 @@
 //      (`weekly-report:{periodStart}:{periodEnd}:{ledgerMode}`) so a
 //      duplicate "generate" request resolves to the SAME job row
 //      instead of creating a second one (§AE).
+// POST /admin-reports { action: "publish", reportId } -> enqueues a
+//      TELEGRAM_REPORT_PUBLICATION job for an already-FINALIZED report
+//      (Section 12 Part I closes the gap Section 11 left open: nothing
+//      ever created this job type). `created_by` is deliberately the
+//      REAL calling admin's own user id, never the literal "system" —
+//      `TelegramReportPublicationJobHandler`'s dispatch goes through
+//      `PublishingAuthorizer`, which requires a real identity + active
+//      license + WEEKLY_REPORTS entitlement to authorize a publication
+//      (the same way any other Telegram publication is authorized).
+//      This is also why the worker's own scheduler never auto-enqueues
+//      this job type for a "system"-created report: there is no
+//      platform-level publishing identity in the locked authorization
+//      model, and inventing one would be a silent architecture change
+//      — see docs/architecture/JOBS_AND_SCHEDULING.md.
 //
 // OWNER/ADMIN only.
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { bearerToken, corsHeaders, errorResponse, jsonResponse, readServerConfig, requireAdminRole, resolveAuthenticatedUser } from "../_shared/auth.ts";
+import { createFixedWindowRateLimiter } from "../_shared/rate-limit.ts";
 
 const METHODS = "GET, POST, OPTIONS";
 const LIST_LIMIT_DEFAULT = 20;
 const LIST_LIMIT_MAX = 50;
 const VALID_LEDGER_MODES = new Set(["PAPER", "LIVE"]);
+
+// Section 12 Part T — bounds repeated report-generation requests (each
+// one is a real INSERT attempt against operational_jobs, even though
+// a duplicate idempotency key resolves harmlessly). Defense in depth,
+// not the primary control — see the module's own doc comment.
+const generateRateLimiter = createFixedWindowRateLimiter(5, 60);
 
 Deno.serve(async (req: Request) => {
   const headers = corsHeaders(METHODS);
@@ -61,15 +82,51 @@ Deno.serve(async (req: Request) => {
   }
 
   if (req.method === "POST") {
-    let body: { action?: string; periodStart?: string; periodEnd?: string; ledgerMode?: string };
+    if (!generateRateLimiter.check(resolvedUser.user.id)) {
+      return errorResponse("RATE_LIMITED", "Too many report requests. Try again shortly.", 429, headers);
+    }
+
+    let body: { action?: string; periodStart?: string; periodEnd?: string; ledgerMode?: string; reportId?: string };
     try {
       body = await req.json();
     } catch {
       return errorResponse("INVALID_PAYLOAD", "Request body must be JSON.", 400, headers);
     }
 
+    if (body.action === "publish") {
+      if (!body.reportId) {
+        return errorResponse("INVALID_PAYLOAD", 'Only {"action":"publish","reportId":"..."} is supported.', 400, headers);
+      }
+
+      const { data: report, error: reportError } = await supabase.from("weekly_reports").select("report_id, status").eq("report_id", body.reportId).maybeSingle();
+      if (reportError || !report) return errorResponse("REPORT_NOT_FOUND", "No report found with that id.", 404, headers);
+      if (report.status !== "FINALIZED") return errorResponse("PUBLISH_NOT_PERMITTED", `Only a FINALIZED report may be published (current status: "${report.status}").`, 409, headers);
+
+      const idempotencyKey = `telegram-report-publication:${body.reportId}`;
+      const { data: existingJob } = await supabase.from("operational_jobs").select("job_id, status").eq("idempotency_key", idempotencyKey).maybeSingle();
+      if (existingJob) {
+        return jsonResponse({ jobId: existingJob.job_id, status: existingJob.status, alreadyExisted: true }, 200, headers);
+      }
+
+      const { data: created, error: insertError } = await supabase
+        .from("operational_jobs")
+        .insert({ job_type: "TELEGRAM_REPORT_PUBLICATION", status: "QUEUED", payload_reference: { reportId: body.reportId }, max_attempts: 3, idempotency_key: idempotencyKey, created_by: resolvedUser.user.id })
+        .select("job_id, status")
+        .single();
+      if (insertError || !created) {
+        const { data: raceWinner } = await supabase.from("operational_jobs").select("job_id, status").eq("idempotency_key", idempotencyKey).maybeSingle();
+        if (raceWinner) return jsonResponse({ jobId: raceWinner.job_id, status: raceWinner.status, alreadyExisted: true }, 200, headers);
+        return errorResponse("JOB_CREATE_FAILED", "Could not enqueue report publication.", 500, headers);
+      }
+
+      const { error: auditError } = await supabase.from("audit_logs").insert({ actor_user_id: resolvedUser.user.id, action: "report_publication_requested", resource_type: "weekly_report", resource_id: body.reportId, outcome: "success", metadata: { viaJobId: created.job_id } });
+      if (auditError) console.error("admin-reports: best-effort audit write failed", auditError.message);
+
+      return jsonResponse({ jobId: created.job_id, status: created.status, alreadyExisted: false }, 200, headers);
+    }
+
     if (body.action !== "generate" || !body.periodStart || !body.periodEnd || !body.ledgerMode) {
-      return errorResponse("INVALID_PAYLOAD", 'Only {"action":"generate","periodStart":"...","periodEnd":"...","ledgerMode":"PAPER"|"LIVE"} is supported.', 400, headers);
+      return errorResponse("INVALID_PAYLOAD", 'Only {"action":"generate","periodStart":"...","periodEnd":"...","ledgerMode":"PAPER"|"LIVE"} or {"action":"publish","reportId":"..."} is supported.', 400, headers);
     }
     if (!VALID_LEDGER_MODES.has(body.ledgerMode)) {
       return errorResponse("INVALID_PAYLOAD", 'ledgerMode must be "PAPER" or "LIVE".', 400, headers);

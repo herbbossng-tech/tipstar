@@ -26,3 +26,15 @@ export async function authenticateWithTelegram(rawInitData: string): Promise<Tel
 export async function authenticateWithDevMode(): Promise<TelegramAuthResponse> {
   return apiRequest<TelegramAuthResponse>("/telegram-auth", { method: "POST", body: { mode: "dev" } });
 }
+
+/**
+ * Calls `/owner-bootstrap` (Section 03) with the caller's own already-
+ * authenticated session and the server-only `OWNER_BOOTSTRAP_SECRET`.
+ * Succeeds at most once ever, for whichever caller gets there first —
+ * the server disables the endpoint permanently afterward
+ * (`platform_settings.owner_bootstrapped_at`). Never exposes the secret
+ * value itself to any other caller or log.
+ */
+export async function bootstrapOwner(sessionToken: string, secret: string): Promise<void> {
+  await apiRequest<unknown>("/owner-bootstrap", { method: "POST", headers: { authorization: `Bearer ${sessionToken}` }, body: { secret } });
+}

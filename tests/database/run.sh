@@ -83,3 +83,6 @@ sudo -u postgres psql -d "$DB_NAME" -f "$TEST_DIR/140_section10_rls_cases.sql"
 
 echo "== Running RLS test suite: operations/jobs/reporting (read the transcript below against each test's stated expectation) =="
 sudo -u postgres psql -d "$DB_NAME" -f "$TEST_DIR/160_section11_rls_cases.sql"
+
+echo "== Running real concurrency proof: claim_next_operational_job() under contention (Section 12 Part J) =="
+"$TEST_DIR/concurrency_test.sh" "$DB_NAME" 10
