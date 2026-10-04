@@ -71,4 +71,41 @@ describe("OperationalHealthCheckJobHandler — Section 11 Part F/Q (closes the p
     const subsystems = audit.getEvents()[0]!.metadata!.subsystems as Record<string, { status: string }>;
     expect(subsystems.telegram_integration!.status).toBe("UNKNOWN");
   });
+
+  it("TEST 5: with no settlementsConnectivityProbe supplied, SETTLEMENT_SUBSYSTEM reports the honest UNKNOWN (Section 11 default, unchanged)", async () => {
+    const audit = new InMemoryAuditService();
+    const handler = new OperationalHealthCheckJobHandler({ operationalJobs: new HealthyJobsRepository(), agentInvocations: new InMemoryInvocationsRepository(), performanceLedger: healthyLedger, audit, telegramConfigured: false, footballDataProviderConfigured: false, oddsProviderConfigured: false, aviatorDataConfigured: false });
+    await handler.handle(job());
+    const subsystems = audit.getEvents()[0]!.metadata!.subsystems as Record<string, { status: string }>;
+    expect(subsystems.settlement_subsystem!.status).toBe("UNKNOWN");
+  });
+
+  it("TEST 6: a real settlementsConnectivityProbe that succeeds reports SETTLEMENT_SUBSYSTEM HEALTHY (Section 12 Part Y resolution)", async () => {
+    const audit = new InMemoryAuditService();
+    const handler = new OperationalHealthCheckJobHandler({ operationalJobs: new HealthyJobsRepository(), agentInvocations: new InMemoryInvocationsRepository(), performanceLedger: healthyLedger, settlementsConnectivityProbe: async () => undefined, audit, telegramConfigured: false, footballDataProviderConfigured: false, oddsProviderConfigured: false, aviatorDataConfigured: false });
+    await handler.handle(job());
+    const subsystems = audit.getEvents()[0]!.metadata!.subsystems as Record<string, { status: string }>;
+    expect(subsystems.settlement_subsystem!.status).toBe("HEALTHY");
+  });
+
+  it("TEST 7: a real settlementsConnectivityProbe that throws reports SETTLEMENT_SUBSYSTEM UNAVAILABLE — never a fabricated HEALTHY — and fails the job", async () => {
+    const audit = new InMemoryAuditService();
+    const handler = new OperationalHealthCheckJobHandler({
+      operationalJobs: new HealthyJobsRepository(),
+      agentInvocations: new InMemoryInvocationsRepository(),
+      performanceLedger: healthyLedger,
+      settlementsConnectivityProbe: async () => {
+        throw new Error("settlements table unreachable");
+      },
+      audit,
+      telegramConfigured: false,
+      footballDataProviderConfigured: false,
+      oddsProviderConfigured: false,
+      aviatorDataConfigured: false,
+    });
+    const result = await handler.handle(job());
+    expect(result.ok).toBe(false);
+    const subsystems = audit.getEvents()[0]!.metadata!.subsystems as Record<string, { status: string }>;
+    expect(subsystems.settlement_subsystem!.status).toBe("UNAVAILABLE");
+  });
 });

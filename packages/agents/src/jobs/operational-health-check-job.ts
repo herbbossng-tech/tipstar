@@ -19,12 +19,16 @@ import type { JobHandler, JobHandlerResult } from "./worker.js";
  *  - REPORTING_SUBSYSTEM: a real read against `performance_ledger` via
  *    the already-existing `PerformanceLedgerReader` (Section 11's own
  *    reporting read surface).
- *  - SETTLEMENT_SUBSYSTEM: deliberately `UNKNOWN` — no dedicated
- *    settlements-connectivity probe is wired in this first version (it
- *    would mean adding a new Supabase client dependency to this handler
- *    for a check `REPORTING_SUBSYSTEM`'s probe already substantially
- *    covers, since both tables live in the same Postgres instance). See
- *    `OPEN_QUESTIONS.md`'s new entry on this.
+ *  - SETTLEMENT_SUBSYSTEM: a real bounded probe against `settlements`
+ *    when the caller supplies one (Section 12 Part Y — "the existing
+ *    settlement probe returning UNKNOWN must be resolved if there is a
+ *    safe real health signal"; there is one, the same bounded-read
+ *    pattern every other probe here already uses). The probe function
+ *    itself is caller-supplied, never constructed in this package, so
+ *    this handler takes on no new Supabase-client-specific dependency
+ *    type — it only calls whatever bounded read the caller hands it and
+ *    classifies the result exactly like every other probe. Falls back
+ *    to the prior, honest `UNKNOWN` when no probe is supplied.
  *  - TELEGRAM_INTEGRATION/FOOTBALL_DATA_PROVIDER/ODDS_PROVIDER/
  *    AVIATOR_DATA_BOUNDARY: this job never makes an outbound call to any
  *    external provider (no fake reachability claims) — it only reports
@@ -46,6 +50,8 @@ export interface OperationalHealthCheckJobDependencies {
   readonly operationalJobs: OperationalJobsRepository;
   readonly agentInvocations: InvocationsRepository;
   readonly performanceLedger: PerformanceLedgerReader;
+  /** A bounded read against `settlements` (e.g. `select id limit 1`) — caller-supplied so this package takes on no Supabase-client-specific dependency. Omit to report SETTLEMENT_SUBSYSTEM as the honest `UNKNOWN` rather than skipping the probe silently. */
+  readonly settlementsConnectivityProbe?: (() => Promise<unknown>) | undefined;
   readonly audit: AuditService;
   readonly telegramConfigured: boolean;
   readonly footballDataProviderConfigured: boolean;
@@ -78,13 +84,14 @@ export class OperationalHealthCheckJobHandler implements JobHandler {
     const now = new Date();
     const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
     const reportingProbe = await probeViaCall(() => this.deps.performanceLedger.listForPeriod(yesterday.toISOString(), now.toISOString(), "LIVE"));
+    const settlementProbe = this.deps.settlementsConnectivityProbe ? await probeViaCall(this.deps.settlementsConnectivityProbe) : { status: SubsystemHealthStatus.UNKNOWN, reason: "No settlements-connectivity probe was supplied to this handler." };
 
     const report = evaluateOperationalHealth({
       [OperationalSubsystem.DATABASE]: databaseAndJobRunnerProbe,
       [OperationalSubsystem.JOB_RUNNER]: databaseAndJobRunnerProbe,
       [OperationalSubsystem.AGENT_FRAMEWORK]: agentFrameworkProbe,
       [OperationalSubsystem.REPORTING_SUBSYSTEM]: reportingProbe,
-      [OperationalSubsystem.SETTLEMENT_SUBSYSTEM]: { status: SubsystemHealthStatus.UNKNOWN, reason: "No dedicated settlements-connectivity probe is wired in Section 11 — see OPEN_QUESTIONS.md." },
+      [OperationalSubsystem.SETTLEMENT_SUBSYSTEM]: settlementProbe,
       [OperationalSubsystem.TELEGRAM_INTEGRATION]: configuredOrUnknown(this.deps.telegramConfigured),
       [OperationalSubsystem.FOOTBALL_DATA_PROVIDER]: configuredOrUnknown(this.deps.footballDataProviderConfigured),
       [OperationalSubsystem.ODDS_PROVIDER]: configuredOrUnknown(this.deps.oddsProviderConfigured),

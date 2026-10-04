@@ -167,6 +167,28 @@ describe("license admin operations", () => {
     expect(second.ok).toBe(false);
   });
 
+  it("Section 12 — InMemoryLicensesRepository composes real entitlements when constructed with an InMemoryLicenseEntitlementsRepository (OPEN_QUESTIONS.md #31, resolved for fixtures that need it)", async () => {
+    const entitlements = new InMemoryLicenseEntitlementsRepository();
+    const licenses = new InMemoryLicensesRepository(entitlements);
+    const license = await licenses.insert({ userId: "user-1", licenseKey: "k1", plan: "pro", status: LicenseStatus.ACTIVE, startsAt: new Date().toISOString(), expiresAt: null, maxDevices: 1, createdBy: "owner-1" });
+    expect(license.entitlements).toEqual([]); // nothing assigned yet — never fabricated
+
+    await entitlements.upsert(license.id!, Entitlement.FOOTBALL_TICKETS, true);
+    const resolved = await licenses.getActiveOrTrialForUser("user-1");
+    expect(resolved?.entitlements).toContain(Entitlement.FOOTBALL_TICKETS);
+
+    const byId = await licenses.getById(license.id!);
+    expect(byId?.entitlements).toContain(Entitlement.FOOTBALL_TICKETS);
+  });
+
+  it("without an entitlements repository, InMemoryLicensesRepository behaves exactly as before — entitlements always empty, never silently fabricated", async () => {
+    const licenses = new InMemoryLicensesRepository();
+    const license = await licenses.insert({ userId: "user-1", licenseKey: "k1", plan: "pro", status: LicenseStatus.ACTIVE, startsAt: new Date().toISOString(), expiresAt: null, maxDevices: 1, createdBy: "owner-1" });
+    expect(license.entitlements).toEqual([]);
+    const resolved = await licenses.getActiveOrTrialForUser("user-1");
+    expect(resolved?.entitlements).toEqual([]);
+  });
+
   it("updateLicense/suspendLicense/revokeLicense all require admin authority and are audited", async () => {
     const licenses = new InMemoryLicensesRepository();
     const audit = new InMemoryAuditService();

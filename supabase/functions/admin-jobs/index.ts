@@ -14,10 +14,19 @@
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { bearerToken, corsHeaders, errorResponse, jsonResponse, readServerConfig, requireAdminRole, resolveAuthenticatedUser } from "../_shared/auth.ts";
+import { createFixedWindowRateLimiter } from "../_shared/rate-limit.ts";
 
 const METHODS = "GET, POST, OPTIONS";
 const LIST_LIMIT = 50;
 const VALID_STATUSES = new Set(["QUEUED", "RUNNING", "SUCCEEDED", "FAILED", "CANCELLED"]);
+
+// Section 12 Part T — bounds repeated retry abuse (a scripted or
+// compromised admin account hammering /admin-jobs) independently of
+// the job system's own max_attempts semantics, which only bound a
+// single job's lifetime, not how often an admin can call this endpoint.
+// Defense in depth, not the primary control — see the module's own doc
+// comment for the single-warm-isolate caveat.
+const retryRateLimiter = createFixedWindowRateLimiter(10, 60);
 
 Deno.serve(async (req: Request) => {
   const headers = corsHeaders(METHODS);
@@ -51,6 +60,10 @@ Deno.serve(async (req: Request) => {
   }
 
   if (req.method === "POST") {
+    if (!retryRateLimiter.check(resolvedUser.user.id)) {
+      return errorResponse("RATE_LIMITED", "Too many retry requests. Try again shortly.", 429, headers);
+    }
+
     let body: { action?: string; jobId?: string };
     try {
       body = await req.json();
