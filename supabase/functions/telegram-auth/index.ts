@@ -33,6 +33,7 @@
 
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { fromHex, hmacSha256, sha256Hex, textEncoder, timingSafeEqualBytes } from "../_shared/crypto.ts";
+import { createFixedWindowRateLimiter } from "../_shared/rate-limit.ts";
 import { issueAuthSession, type AuthSession } from "../_shared/session.ts";
 
 const CORS_HEADERS = {
@@ -256,28 +257,11 @@ function buildDevAuthenticatedIdentity(): AuthenticatedIdentity {
   };
 }
 
-// Fixed-window in-memory rate limiting, scoped to a single warm isolate.
-// This is NOT sufficient on its own for a distributed edge deployment
-// (concurrent/cold isolates don't share this Map) — see
-// packages/shared/src/rate-limit.ts for the same caveat on the Node side.
-// It is defense in depth, not the primary control.
-const RATE_LIMIT_MAX_REQUESTS = 20;
-const RATE_LIMIT_WINDOW_SECONDS = 60;
-const rateLimitState = new Map<string, { count: number; windowStart: number }>();
-
-function checkRateLimit(key: string): boolean {
-  const nowSeconds = Date.now() / 1000;
-  const entry = rateLimitState.get(key);
-  if (!entry || nowSeconds - entry.windowStart >= RATE_LIMIT_WINDOW_SECONDS) {
-    rateLimitState.set(key, { count: 1, windowStart: nowSeconds });
-    return true;
-  }
-  if (entry.count >= RATE_LIMIT_MAX_REQUESTS) {
-    return false;
-  }
-  entry.count += 1;
-  return true;
-}
+// Fixed-window in-memory rate limiting (Section 12 — extracted into
+// `_shared/rate-limit.ts` so admin mutation endpoints reuse the exact
+// same logic). Scoped to a single warm isolate — defense in depth, not
+// the primary control; see that module's own doc comment.
+const rateLimiter = createFixedWindowRateLimiter(20, 60);
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
@@ -288,7 +272,7 @@ Deno.serve(async (req: Request) => {
   }
 
   const clientKey = req.headers.get("x-forwarded-for") ?? "unknown";
-  if (!checkRateLimit(clientKey)) {
+  if (!rateLimiter.check(clientKey)) {
     return errorResponse(TelegramAuthErrorCode.RATE_LIMITED, "Too many authentication attempts. Try again shortly.", 429);
   }
 

@@ -32,6 +32,8 @@ access live in `packages/config` (`loadServerConfig()` / `loadClientConfig()`).
 | `AVIATOR_DATA_PROVIDER`, `AVIATOR_DATA_API_KEY` | no | key is **yes** | Untouched by Section 04 — Aviator data ingestion is not this section's scope. |
 | `SPORTYBET_INTEGRATION_MODE` | no (default `disabled`) | no | `manual` \| `assisted` \| `disabled`. Never assume an undocumented public API — see `docs/architecture/OPEN_QUESTIONS.md`. |
 | `JOBS_ENABLED` | no (default `false`) | no | Gates the scheduling/background-jobs contract (`@sport-os/platform`'s `JobScheduler`) — no concrete scheduler exists yet. |
+| `WORKER_POLL_INTERVAL_MS` | no (default `5000`) | no | Section 12. How often `apps/worker` polls for a claimable job when idle. |
+| `WORKER_SCHEDULER_TICK_MS` | no (default `60000`) | no | Section 12. How often `apps/worker` runs its internal scheduler tick (weekly-report + health-check enqueueing). |
 
 **Production fails safe:** `loadServerConfig()` throws `ConfigurationError`
 when `APP_ENV=production` and `SUPABASE_SERVICE_ROLE_KEY`,

@@ -586,21 +586,17 @@ Node script in a new `apps/worker` or a scheduled Edge Function /
 external cron invoking an HTTP endpoint that calls `runOnce()` for each
 job type) and decide its actual deployment story.
 
-## 34. `OPERATIONAL_HEALTH_CHECK`'s settlement-subsystem probe is always `UNKNOWN`
+## 34. `OPERATIONAL_HEALTH_CHECK`'s settlement-subsystem probe is always `UNKNOWN` — RESOLVED (Section 12)
 
-`OperationalHealthCheckJobHandler` probes database/job-runner (via
-`operational_jobs`), the agent framework (via `agent_invocations`), and
-the reporting subsystem (via `performance_ledger`) with real reads, but
-deliberately does not probe the `settlements`/`tickets` tables directly
-— doing so would mean adding a new Supabase client dependency to this
-handler for a signal the reporting probe already substantially covers
-(both tables live in the same Postgres instance). It always reports
-`SETTLEMENT_SUBSYSTEM: UNKNOWN` with an explicit reason, never a
-fabricated `HEALTHY`. **Next decision point:** if settlement-specific
-connectivity ever needs its own signal (e.g. to distinguish "the
-database is up" from "the settlements table specifically is
-reachable"), add a dedicated bounded read against `settlements` to this
-handler.
+`OperationalHealthCheckJobHandler` now takes an optional
+`settlementsConnectivityProbe` dependency; `apps/worker`'s container
+wires it to a real, bounded `select id from settlements limit 1`. A
+thrown error still reports `UNAVAILABLE` (never silently swallowed into
+`HEALTHY`), and the probe is deliberately caller-supplied — this
+package itself still takes on no Supabase-client-specific dependency
+type. Callers that don't supply the probe (e.g. the unit test suite's
+fakes) still get the honest `UNKNOWN` this entry originally described —
+that fallback is intentional, not a regression.
 
 ## 35. The admin Mini App ships Home/Jobs/Reports only — Licenses/Users/Agents/Audit/System screens are backend-ready but have no UI yet
 

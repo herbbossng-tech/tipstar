@@ -23,3 +23,8 @@ export async function listAdminReports(sessionToken: string, filters: { readonly
 export async function generateAdminReport(sessionToken: string, input: { readonly periodStart: string; readonly periodEnd: string; readonly ledgerMode: LedgerMode }): Promise<AdminReportGenerateResponse> {
   return authedPost<AdminReportGenerateResponse>("/admin-reports", sessionToken, { action: "generate", ...input });
 }
+
+/** Enqueues a TELEGRAM_REPORT_PUBLICATION job for an already-FINALIZED report (Section 12 Part I). The admin's own real identity is the publication actor — see admin-reports/index.ts's doc comment for why the worker never auto-publishes a scheduler-created report. */
+export async function publishAdminReport(sessionToken: string, reportId: string): Promise<AdminReportGenerateResponse> {
+  return authedPost<AdminReportGenerateResponse>("/admin-reports", sessionToken, { action: "publish", reportId });
+}
