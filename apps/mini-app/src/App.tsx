@@ -2,6 +2,7 @@ import { Route, Routes } from "react-router-dom";
 import { AccountPage } from "./account/AccountPage.js";
 import { AdminHome } from "./admin/AdminHome.js";
 import { AdminJobsPage } from "./admin/AdminJobsPage.js";
+import { AdminLicensesPage } from "./admin/AdminLicensesPage.js";
 import { AdminReportsPage } from "./admin/AdminReportsPage.js";
 import { AviatorPage } from "./aviator/AviatorPage.js";
 import { FixtureDetailPage } from "./football/FixtureDetailPage.js";
@@ -28,6 +29,7 @@ export function App(): JSX.Element {
           <Route path="/account" element={<AccountPage />} />
           <Route path="/admin" element={<AdminHome />} />
           <Route path="/admin/jobs" element={<AdminJobsPage />} />
+          <Route path="/admin/licenses" element={<AdminLicensesPage />} />
           <Route path="/admin/reports" element={<AdminReportsPage />} />
         </Routes>
       </Layout>

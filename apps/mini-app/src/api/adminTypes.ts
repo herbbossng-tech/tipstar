@@ -80,3 +80,41 @@ export interface AdminReportGenerateResponse {
   readonly status: JobStatus;
   readonly alreadyExisted: boolean;
 }
+
+export interface AdminUserRow {
+  readonly id: string;
+  readonly telegram_user_id: number;
+  readonly username: string | null;
+  readonly first_name: string;
+  readonly role: "owner" | "admin" | "user";
+  readonly status: "active" | "suspended" | "disabled";
+  readonly created_at: string;
+}
+
+export interface AdminCurrentLicense {
+  readonly id: string;
+  readonly user_id: string;
+  readonly plan: string;
+  readonly status: "trial" | "active";
+  readonly expires_at: string | null;
+}
+
+export interface AdminUserWithLicense {
+  readonly user: AdminUserRow;
+  readonly currentLicense: AdminCurrentLicense | null;
+}
+
+export interface AdminUsersResponse {
+  readonly users: readonly AdminUserWithLicense[];
+}
+
+export interface AdminLicenseCreateResponse {
+  readonly license: {
+    readonly id: string;
+    readonly user_id: string;
+    readonly plan: string;
+    readonly status: "trial" | "active";
+    readonly starts_at: string;
+    readonly expires_at: string | null;
+  };
+}

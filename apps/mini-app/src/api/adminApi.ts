@@ -1,5 +1,5 @@
 import { authedGet, authedPost } from "../services/api.js";
-import type { AdminJobRetryResponse, AdminJobsResponse, AdminOverviewResponse, AdminReportGenerateResponse, AdminReportsResponse, JobStatus, JobType } from "./adminTypes.js";
+import type { AdminJobRetryResponse, AdminJobsResponse, AdminLicenseCreateResponse, AdminOverviewResponse, AdminReportGenerateResponse, AdminReportsResponse, AdminUsersResponse, JobStatus, JobType } from "./adminTypes.js";
 import type { LedgerMode } from "./types.js";
 
 /** Section 11 admin endpoints. OWNER/ADMIN only — the server independently re-verifies role on every call regardless of what the Mini App renders (§R/§S: "frontend gating is cosmetic"). */
@@ -27,4 +27,22 @@ export async function generateAdminReport(sessionToken: string, input: { readonl
 /** Enqueues a TELEGRAM_REPORT_PUBLICATION job for an already-FINALIZED report (Section 12 Part I). The admin's own real identity is the publication actor — see admin-reports/index.ts's doc comment for why the worker never auto-publishes a scheduler-created report. */
 export async function publishAdminReport(sessionToken: string, reportId: string): Promise<AdminReportGenerateResponse> {
   return authedPost<AdminReportGenerateResponse>("/admin-reports", sessionToken, { action: "publish", reportId });
+}
+
+export async function listAdminUsers(sessionToken: string): Promise<AdminUsersResponse> {
+  return authedGet<AdminUsersResponse>("/admin-licenses", sessionToken);
+}
+
+export interface CreateAdminLicenseInput {
+  readonly userId: string;
+  readonly plan: string;
+  readonly status: "trial" | "active";
+  readonly expiresAt: string | null;
+  readonly maxDevices: number | null;
+  readonly entitlements: readonly string[];
+}
+
+/** Creates a brand-new license for a user with none, via the real, already-admin-gated createLicense() domain rule (Section 03) — never bypasses the database's "one active/trial license per user" constraint. */
+export async function createAdminLicense(sessionToken: string, input: CreateAdminLicenseInput): Promise<AdminLicenseCreateResponse> {
+  return authedPost<AdminLicenseCreateResponse>("/admin-licenses", sessionToken, { action: "create", ...input });
 }

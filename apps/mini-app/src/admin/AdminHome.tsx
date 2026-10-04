@@ -24,6 +24,9 @@ function AdminHomeContent(): JSX.Element {
       <p className="page__subtitle">Operational control plane — licenses, jobs, and reporting.</p>
 
       <div className="filter-row">
+        <Link to="/admin/licenses" className="button button--secondary">
+          Licenses
+        </Link>
         <Link to="/admin/jobs" className="button button--secondary">
           Jobs
         </Link>
