@@ -12,14 +12,16 @@ automation — those remain untouched, per this section's locked rules.
 
 ## Providers actually connected
 
-**None.** No football/odds provider credential exists anywhere in this
-repository or its environment. `FOOTBALL_DATA_PROVIDER`/
-`FOOTBALL_DATA_API_KEY`/`ODDS_PROVIDER`/`ODDS_API_KEY` remain unset
-placeholders, exactly as Section 01 left them (now joined by
-`FOOTBALL_DATA_ENABLED`/`FOOTBALL_DATA_BASE_URL`/
-`FOOTBALL_DATA_TIMEOUT_MS`/`FOOTBALL_DATA_MAX_RETRIES`/
-`FOOTBALL_DATA_RATE_LIMIT_PER_MINUTE`/`FOOTBALL_DATA_POLL_INTERVAL_SECONDS`
-and their `ODDS_*` equivalents — see `../environment-variables.md`).
+**Updated by Section 13** — see `FOOTBALL_PROVIDER_INTEGRATION.md` for
+the full writeup. Real adapters now exist for Sportmonks
+(`adapters/sportmonks-provider.ts`, the canonical football-data
+provider) and The Odds API (`adapters/odds-api-provider.ts`, the
+canonical odds provider), terminating at this section's own
+adapter/normalization boundary unchanged. Both remain **disabled by
+default** (`FOOTBALL_DATA_ENABLED=false`/`ODDS_ENABLED=false`) until an
+operator supplies real credentials and explicitly selects competitions/
+sport keys (`FOOTBALL_DATA_COMPETITION_IDS`/`ODDS_SPORT_KEYS`) — there is
+still no default list and nothing auto-enables either provider.
 
 The one concrete adapter this section ships,
 `adapters/test-fixture-provider.ts`'s `testFixtureProvider`

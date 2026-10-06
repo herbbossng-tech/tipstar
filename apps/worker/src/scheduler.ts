@@ -60,11 +60,21 @@ export interface SchedulerDependencies {
   readonly logger: Logger;
 }
 
+/** Section 13 — one provider's scheduling inputs, all configuration-driven (never a hard-coded aggressive default): `enabled` gates whether this provider's jobs are ever enqueued at all, `pollIntervalSeconds` sets the bucket size (so two ticks within the same configured interval converge on one job, same idempotency pattern as the health check), and `hasSelection` is `selectedIds.length > 0` (an enabled provider with NOTHING selected still never enqueues — "never generate uncontrolled API usage"). */
+export interface FootballProviderScheduleConfig {
+  readonly enabled: boolean;
+  readonly pollIntervalSeconds: number | undefined;
+  readonly hasSelection: boolean;
+}
+
 export interface SchedulerOptions {
   /** How often health-check buckets are created. Defaults to 15 minutes. */
   readonly healthCheckBucketMinutes?: number;
   /** The ledger mode weekly reports are generated for. Defaults to LIVE — PAPER reporting, if ever needed, is a separate explicit schedule, never silently combined. */
   readonly weeklyReportLedgerMode?: "LIVE" | "PAPER";
+  /** Omitted or `enabled: false` or no selection configured — never enqueued. */
+  readonly football?: FootballProviderScheduleConfig;
+  readonly odds?: FootballProviderScheduleConfig;
 }
 
 /**
@@ -97,6 +107,26 @@ export async function runSchedulerTick(deps: SchedulerDependencies, now: Date, o
     maxAttempts: 1,
     createdBy: "system",
   });
+
+  await enqueueFootballProviderJob(deps, now, options.football, [OperationalJobType.FOOTBALL_REFERENCE_INGESTION, OperationalJobType.FOOTBALL_FIXTURE_INGESTION]);
+  await enqueueFootballProviderJob(deps, now, options.odds, [OperationalJobType.FOOTBALL_ODDS_INGESTION]);
+}
+
+/** Shared by the football and odds schedule configs — same bucket/idempotency pattern as the health check above, scoped per job type so e.g. reference and fixture ingestion each get their own durable row even though they share one cadence. */
+async function enqueueFootballProviderJob(deps: SchedulerDependencies, now: Date, schedule: FootballProviderScheduleConfig | undefined, jobTypes: readonly OperationalJobType[]): Promise<void> {
+  if (!schedule || !schedule.enabled || !schedule.hasSelection || !schedule.pollIntervalSeconds) return;
+  const bucketMinutes = Math.max(1, Math.round(schedule.pollIntervalSeconds / 60));
+  const bucket = healthCheckBucketKey(now, bucketMinutes);
+  for (const jobType of jobTypes) {
+    await enqueueIfAbsent(deps, {
+      jobType,
+      payloadReference: { bucket },
+      idempotencyKey: `${jobType.toLowerCase()}:${bucket}`,
+      scheduledAt: now.toISOString(),
+      maxAttempts: 3,
+      createdBy: "system",
+    });
+  }
 }
 
 async function enqueueIfAbsent(deps: SchedulerDependencies, input: NewOperationalJobInput): Promise<void> {

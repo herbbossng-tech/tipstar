@@ -43,6 +43,19 @@ describe("InMemoryFixturesRepository", () => {
     expect(second.scheduledKickoffAt).toBe(first.scheduledKickoffAt);
   });
 
+  it("listByKickoffWindow returns only fixtures whose scheduledKickoffAt falls inside [from, to], inclusive", async () => {
+    const repo = new InMemoryFixturesRepository();
+    const make = (providerFixtureId: string, scheduledKickoffAt: string) =>
+      repo.upsert({ competitionId: generateId(), seasonId: undefined, homeTeamId: generateId(), awayTeamId: generateId(), scheduledKickoffAt, status: "scheduled", providerStatusRaw: "NS", provider: "sportmonks", providerFixtureId });
+    await make("F-before", "2026-01-10T16:00:00Z");
+    const inWindow = await make("F-in-window", "2026-01-10T19:00:00Z");
+    await make("F-after", "2026-01-11T00:00:00Z");
+
+    const results = await repo.listByKickoffWindow("2026-01-10T18:00:00Z", "2026-01-10T20:00:00Z");
+    expect(results).toHaveLength(1);
+    expect(results[0]?.id).toBe(inWindow.id);
+  });
+
   describe("getByIdAsOf — Mutable Fixture Status Leakage regression (PR review fix)", () => {
     const KICKOFF = "2026-01-10T19:00:00Z";
     const SCHEDULED_OBSERVED_AT = "2026-01-10T17:00:00Z";

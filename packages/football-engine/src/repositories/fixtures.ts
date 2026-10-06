@@ -109,6 +109,20 @@ export interface FixturesRepository {
    * itself doesn't exist) — never a future status.
    */
   getByIdAsOf(id: UUID, asOf: string): Promise<Fixture | undefined>;
+  /**
+   * Section 13 — fixture identity reconciliation building block: every
+   * fixture (any provider under THIS canonical provider's own
+   * fixtures table, i.e. Sportmonks) whose `scheduledKickoffAt` falls in
+   * `[from, to]`, used to find CANDIDATE matches for a second provider's
+   * own event by team name + kickoff time before a confirmed
+   * `fixture_external_identities` mapping is ever written (see
+   * `FixtureIdentityResolver` in ingestion.ts). Deliberately NOT used for
+   * feature-history/leakage purposes — unlike
+   * `listForTeamBeforeKickoff`/`listAllBeforeKickoff` above, this has no
+   * AsOf/leakage contract at all; callers needing a leakage-safe read
+   * must not reuse this method for that purpose.
+   */
+  listByKickoffWindow(from: ISODateString, to: ISODateString): Promise<readonly Fixture[]>;
 }
 
 export interface NewMatchResultInput {
@@ -368,6 +382,17 @@ export class InMemoryFixturesRepository implements FixturesRepository {
     const latest = latestByTimestamp(eligible, (o) => o.observedAt);
     return { ...fixture, status: latest.status, providerStatusRaw: latest.providerStatusRaw, actualKickoffAt: latest.actualKickoffAt };
   }
+
+  async listByKickoffWindow(from: ISODateString, to: ISODateString): Promise<readonly Fixture[]> {
+    const fromMs = new Date(from).getTime();
+    const toMs = new Date(to).getTime();
+    return [...this.byId.values()]
+      .filter((f) => {
+        const kickoffMs = new Date(f.scheduledKickoffAt).getTime();
+        return kickoffMs >= fromMs && kickoffMs <= toMs;
+      })
+      .sort((a, b) => new Date(a.scheduledKickoffAt).getTime() - new Date(b.scheduledKickoffAt).getTime());
+  }
 }
 
 export class InMemoryMatchResultsRepository implements MatchResultsRepository {
@@ -510,6 +535,12 @@ export class SupabaseFixturesRepository implements FixturesRepository {
 
   async listAllBeforeKickoff(beforeKickoff: ISODateString): Promise<readonly Fixture[]> {
     const { data, error } = await this.client.from("fixtures").select("*").lt("scheduled_kickoff_at", beforeKickoff).order("scheduled_kickoff_at", { ascending: true });
+    if (error || !data) return [];
+    return (data as readonly FixtureRow[]).map(fixtureRowToDomain);
+  }
+
+  async listByKickoffWindow(from: ISODateString, to: ISODateString): Promise<readonly Fixture[]> {
+    const { data, error } = await this.client.from("fixtures").select("*").gte("scheduled_kickoff_at", from).lte("scheduled_kickoff_at", to).order("scheduled_kickoff_at", { ascending: true });
     if (error || !data) return [];
     return (data as readonly FixtureRow[]).map(fixtureRowToDomain);
   }

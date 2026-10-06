@@ -1,5 +1,6 @@
 import { OperationalJobWorker } from "@sport-os/agents";
 import { OperationalJobType } from "@sport-os/platform";
+import type { SchedulerOptions } from "./scheduler.js";
 import { StructuredLogger } from "@sport-os/shared";
 import { loadWorkerConfig } from "./config.js";
 import { buildWorkerContainer } from "./container.js";
@@ -30,22 +31,39 @@ const SCHEDULER_TICK_MS = Number(process.env.WORKER_SCHEDULER_TICK_MS ?? 60_000)
 
 const worker = new OperationalJobWorker({ jobs: container.jobs, handlers: container.handlers, audit: container.audit });
 const runner = new WorkerRunner(worker, {
-  jobTypes: [OperationalJobType.PERFORMANCE_SNAPSHOT, OperationalJobType.WEEKLY_REPORT_GENERATION, OperationalJobType.TELEGRAM_REPORT_PUBLICATION, OperationalJobType.OPERATIONAL_HEALTH_CHECK],
+  jobTypes: [
+    OperationalJobType.PERFORMANCE_SNAPSHOT,
+    OperationalJobType.WEEKLY_REPORT_GENERATION,
+    OperationalJobType.TELEGRAM_REPORT_PUBLICATION,
+    OperationalJobType.OPERATIONAL_HEALTH_CHECK,
+    OperationalJobType.FOOTBALL_REFERENCE_INGESTION,
+    OperationalJobType.FOOTBALL_FIXTURE_INGESTION,
+    OperationalJobType.FOOTBALL_ODDS_INGESTION,
+  ],
   pollIntervalMs: POLL_INTERVAL_MS,
   logger,
 });
 
+// Section 13 — scheduling is config-driven, never a hard-coded aggressive
+// default: an unset FOOTBALL_DATA_POLL_INTERVAL_SECONDS/ODDS_POLL_INTERVAL_SECONDS
+// (or FOOTBALL_DATA_ENABLED=false/ODDS_ENABLED=false, or no competitions/
+// sport keys configured) means these jobs are simply never enqueued.
+const schedulerOptions: SchedulerOptions = {
+  football: { enabled: config.providers.football.enabled, pollIntervalSeconds: config.providers.football.pollIntervalSeconds, hasSelection: config.providers.football.selectedIds.length > 0 },
+  odds: { enabled: config.providers.odds.enabled, pollIntervalSeconds: config.providers.odds.pollIntervalSeconds, hasSelection: config.providers.odds.selectedIds.length > 0 },
+};
+
 const schedulerInterval = setInterval(() => {
-  runSchedulerTick(container.schedulerDeps, new Date()).catch((error) => {
+  runSchedulerTick(container.schedulerDeps, new Date(), schedulerOptions).catch((error) => {
     logger.error("Scheduler tick failed unexpectedly", { error: error instanceof Error ? error.message : String(error) });
   });
 }, SCHEDULER_TICK_MS);
 // Run one tick immediately rather than waiting a full interval on a fresh start.
-runSchedulerTick(container.schedulerDeps, new Date()).catch((error) => {
+runSchedulerTick(container.schedulerDeps, new Date(), schedulerOptions).catch((error) => {
   logger.error("Initial scheduler tick failed unexpectedly", { error: error instanceof Error ? error.message : String(error) });
 });
 
-logger.info("Worker started", { pollIntervalMs: POLL_INTERVAL_MS, schedulerTickMs: SCHEDULER_TICK_MS, jobTypes: 4 });
+logger.info("Worker started", { pollIntervalMs: POLL_INTERVAL_MS, schedulerTickMs: SCHEDULER_TICK_MS, jobTypes: 7 });
 
 let shuttingDown = false;
 function shutdown(signal: string): void {

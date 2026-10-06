@@ -11,6 +11,15 @@ export { loadClientConfig } from "./load-client.js";
  * missing required secrets fail this call rather than silently falling
  * back to an insecure default (Section 01 — Environment Model).
  */
+/** Parses a comma-separated env value into a trimmed, non-empty string array — never fabricates an entry, never silently keeps a blank one. */
+function parseCommaSeparatedIds(raw: string | undefined): readonly string[] {
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((id) => id.trim())
+    .filter((id) => id.length > 0);
+}
+
 export function loadServerConfig(source: Record<string, string | undefined> = process.env): AppConfig {
   const parsed = envSchema.safeParse(source);
   if (!parsed.success) {
@@ -46,6 +55,7 @@ export function loadServerConfig(source: Record<string, string | undefined> = pr
         maxRetries: env.FOOTBALL_DATA_MAX_RETRIES,
         rateLimitPerMinute: env.FOOTBALL_DATA_RATE_LIMIT_PER_MINUTE,
         pollIntervalSeconds: env.FOOTBALL_DATA_POLL_INTERVAL_SECONDS,
+        selectedIds: parseCommaSeparatedIds(env.FOOTBALL_DATA_COMPETITION_IDS),
       },
       odds: {
         name: env.ODDS_PROVIDER,
@@ -56,6 +66,7 @@ export function loadServerConfig(source: Record<string, string | undefined> = pr
         maxRetries: env.ODDS_MAX_RETRIES,
         rateLimitPerMinute: env.ODDS_RATE_LIMIT_PER_MINUTE,
         pollIntervalSeconds: env.ODDS_POLL_INTERVAL_SECONDS,
+        selectedIds: parseCommaSeparatedIds(env.ODDS_SPORT_KEYS),
       },
       aviator: { name: env.AVIATOR_DATA_PROVIDER, apiKey: env.AVIATOR_DATA_API_KEY },
     },

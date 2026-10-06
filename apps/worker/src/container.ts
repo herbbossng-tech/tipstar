@@ -1,5 +1,9 @@
 import { AgentOrchestrator, InMemoryIdempotencyStore } from "@sport-os/agent-core";
 import {
+  buildFootballIngestionDependencies,
+  FootballFixtureIngestionJobHandler,
+  FootballOddsIngestionJobHandler,
+  FootballReferenceIngestionJobHandler,
   OperationalHealthCheckJobHandler,
   PerformanceSnapshotJobHandler,
   SupabaseInvocationsRepository,
@@ -15,6 +19,7 @@ import {
   PublishingAuthorizer,
 } from "@sport-os/agents";
 import type { AppConfig } from "@sport-os/config";
+import { ODDS_API_PROVIDER_NAME, SPORTMONKS_PROVIDER_NAME, SupabaseFixtureExternalIdentitiesRepository, type ProviderConfig } from "@sport-os/football-engine";
 import {
   createServiceRoleClient,
   DatabaseLicenseService,
@@ -99,6 +104,44 @@ export function buildWorkerContainer(config: AppConfig, logger: Logger): WorkerC
       aviatorDataConfigured: Boolean(config.providers.aviator.name),
     }),
   ];
+  // Section 13 — real football data provider ingestion. ProviderConfig's
+  // own `provider` field is hard-coded to each adapter's canonical name
+  // here (not read from FOOTBALL_DATA_PROVIDER/ODDS_PROVIDER) since this
+  // container wires up exactly one concrete adapter per provider slot,
+  // not a provider registry — see FOOTBALL_PROVIDER_INTEGRATION.md.
+  const footballProviderConfig: ProviderConfig = {
+    provider: SPORTMONKS_PROVIDER_NAME,
+    enabled: config.providers.football.enabled,
+    baseUrl: config.providers.football.baseUrl,
+    apiKey: config.providers.football.apiKey,
+    timeoutMs: config.providers.football.timeoutMs,
+    maxRetries: config.providers.football.maxRetries,
+    rateLimitPerMinute: config.providers.football.rateLimitPerMinute,
+    pollIntervalSeconds: config.providers.football.pollIntervalSeconds,
+  };
+  const oddsProviderConfig: ProviderConfig = {
+    provider: ODDS_API_PROVIDER_NAME,
+    enabled: config.providers.odds.enabled,
+    baseUrl: config.providers.odds.baseUrl,
+    apiKey: config.providers.odds.apiKey,
+    timeoutMs: config.providers.odds.timeoutMs,
+    maxRetries: config.providers.odds.maxRetries,
+    rateLimitPerMinute: config.providers.odds.rateLimitPerMinute,
+    pollIntervalSeconds: config.providers.odds.pollIntervalSeconds,
+  };
+  const footballIngestionDeps = buildFootballIngestionDependencies(client);
+  if (footballProviderConfig.enabled && config.providers.football.selectedIds.length > 0) {
+    handlers.push(new FootballReferenceIngestionJobHandler(footballIngestionDeps, footballProviderConfig, config.providers.football.selectedIds));
+    handlers.push(new FootballFixtureIngestionJobHandler(footballIngestionDeps, footballProviderConfig, config.providers.football.selectedIds));
+  } else {
+    logger.warn("Football data provider disabled or no competitions configured (FOOTBALL_DATA_ENABLED/FOOTBALL_DATA_COMPETITION_IDS) — FOOTBALL_REFERENCE_INGESTION/FOOTBALL_FIXTURE_INGESTION jobs will fail safely (no handler registered) rather than silently succeeding.");
+  }
+  if (oddsProviderConfig.enabled && config.providers.odds.selectedIds.length > 0) {
+    handlers.push(new FootballOddsIngestionJobHandler(footballIngestionDeps, new SupabaseFixtureExternalIdentitiesRepository(client), oddsProviderConfig, config.providers.odds.selectedIds));
+  } else {
+    logger.warn("Odds provider disabled or no sport keys configured (ODDS_ENABLED/ODDS_SPORT_KEYS) — FOOTBALL_ODDS_INGESTION jobs will fail safely (no handler registered) rather than silently succeeding.");
+  }
+
   if (channelAgent) {
     handlers.push(new TelegramReportPublicationJobHandler({ orchestrator, channelAgent, reports: weeklyReports }));
   } else {
