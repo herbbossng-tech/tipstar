@@ -20,15 +20,17 @@ access live in `packages/config` (`loadServerConfig()` / `loadClientConfig()`).
 | `DEV_AUTH_MODE` | no (default `disabled`) | no | Server-side gate for the dev-mode Telegram auth bypass. **Never usable when `APP_ENV=production`** regardless of this value — `loadServerConfig()` refuses to load such a combination at all. |
 | `VITE_DEV_AUTH_MODE` | no (default `disabled`) | no | Client-visible mirror of `DEV_AUTH_MODE` — only controls whether the Mini App *shows* a dev-login affordance; it grants no capability on its own, since the server re-verifies `DEV_AUTH_MODE` independently. |
 | `OWNER_BOOTSTRAP_SECRET` | no (default: unset) | **yes** | Section 03. One-time OWNER-promotion secret, compared with a timing-safe comparison. Absent by default — bootstrap is then permanently unavailable, a safe fail-closed default, *not* something that must be set. See `docs/architecture/AUTHORIZATION.md`. |
-| `FOOTBALL_DATA_PROVIDER`, `FOOTBALL_DATA_API_KEY` | no | key is **yes** | Provider not selected/integrated yet — see `docs/architecture/FOOTBALL_DATA_ARCHITECTURE.md`'s "Providers actually connected". |
-| `FOOTBALL_DATA_ENABLED` | no (default `false`) | no | Section 04. Mirrors `ProviderConfig.enabled` (`packages/football-engine/src/provider.ts`) once a real adapter reads it — unused today (no live provider). |
+| `FOOTBALL_DATA_PROVIDER`, `FOOTBALL_DATA_API_KEY` | no | key is **yes** | Section 13 — Sportmonks (the canonical football-data provider). See `docs/architecture/FOOTBALL_PROVIDER_INTEGRATION.md`. |
+| `FOOTBALL_DATA_ENABLED` | no (default `false`) | no | Section 04/13. Mirrors `ProviderConfig.enabled`. The Sportmonks adapter/ingestion jobs safely no-op while this is `false` — never auto-enabled. |
 | `FOOTBALL_DATA_BASE_URL` | no | no | Section 04. Mirrors `ProviderConfig.baseUrl`. |
 | `FOOTBALL_DATA_TIMEOUT_MS` | no (default `5000`) | no | Section 04. Mirrors `ProviderConfig.timeoutMs`. |
 | `FOOTBALL_DATA_MAX_RETRIES` | no (default `2`) | no | Section 04. Mirrors `ProviderConfig.maxRetries` — bounded, never infinite (`withBoundedRetries()`). |
 | `FOOTBALL_DATA_RATE_LIMIT_PER_MINUTE` | no (default: unset) | no | Section 04. Mirrors `ProviderConfig.rateLimitPerMinute`. |
-| `FOOTBALL_DATA_POLL_INTERVAL_SECONDS` | no (default: unset) | no | Section 04. Mirrors `ProviderConfig.pollIntervalSeconds`. |
-| `ODDS_PROVIDER`, `ODDS_API_KEY` | no | key is **yes** | |
-| `ODDS_ENABLED`, `ODDS_BASE_URL`, `ODDS_TIMEOUT_MS`, `ODDS_MAX_RETRIES`, `ODDS_RATE_LIMIT_PER_MINUTE`, `ODDS_POLL_INTERVAL_SECONDS` | no (same defaults as their `FOOTBALL_DATA_*` equivalents) | no | Section 04. Same purpose as the `FOOTBALL_DATA_*` provider-config vars above, for the odds provider. |
+| `FOOTBALL_DATA_POLL_INTERVAL_SECONDS` | no (default: unset) | no | Section 04/13. Mirrors `ProviderConfig.pollIntervalSeconds` — also the worker scheduler's enqueue bucket size for `FOOTBALL_REFERENCE_INGESTION`/`FOOTBALL_FIXTURE_INGESTION`. Unset = those jobs are never enqueued. |
+| `FOOTBALL_DATA_COMPETITION_IDS` | no (default: unset) | no | Section 13 — new. Comma-separated Sportmonks league ids to ingest. Unset/empty = nothing selected = ingestion safely no-ops; never a hard-coded permanent league list in code. |
+| `ODDS_PROVIDER`, `ODDS_API_KEY` | no | key is **yes** | Section 13 — The Odds API (the canonical odds provider). |
+| `ODDS_ENABLED`, `ODDS_BASE_URL`, `ODDS_TIMEOUT_MS`, `ODDS_MAX_RETRIES`, `ODDS_RATE_LIMIT_PER_MINUTE`, `ODDS_POLL_INTERVAL_SECONDS` | no (same defaults as their `FOOTBALL_DATA_*` equivalents) | no | Section 04/13. Same purpose as the `FOOTBALL_DATA_*` provider-config vars above, for the odds provider; `ODDS_POLL_INTERVAL_SECONDS` also gates `FOOTBALL_ODDS_INGESTION` scheduling. |
+| `ODDS_SPORT_KEYS` | no (default: unset) | no | Section 13 — new. Comma-separated The Odds API sport keys (e.g. `soccer_epl,soccer_spain_la_liga`) to ingest. Unset/empty = ingestion safely no-ops. |
 | `AVIATOR_DATA_PROVIDER`, `AVIATOR_DATA_API_KEY` | no | key is **yes** | Untouched by Section 04 — Aviator data ingestion is not this section's scope. |
 | `SPORTYBET_INTEGRATION_MODE` | no (default `disabled`) | no | `manual` \| `assisted` \| `disabled`. Never assume an undocumented public API — see `docs/architecture/OPEN_QUESTIONS.md`. |
 | `JOBS_ENABLED` | no (default `false`) | no | Gates the scheduling/background-jobs contract (`@sport-os/platform`'s `JobScheduler`) — no concrete scheduler exists yet. |

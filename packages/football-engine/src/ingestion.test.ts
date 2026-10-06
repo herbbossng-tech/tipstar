@@ -13,6 +13,7 @@ import {
 } from "./adapters/test-fixture-provider.js";
 import { ingestFixtures, ingestMatchEvents, ingestMatchResults, ingestOddsObservations, ingestReferenceData, type IngestionDependencies } from "./ingestion.js";
 import type { FootballDataProvider } from "./provider.js";
+import { InMemoryFixtureExternalIdentitiesRepository } from "./repositories/fixture-identities.js";
 import { InMemoryFixturesRepository, InMemoryMatchEventsRepository, InMemoryMatchResultsRepository } from "./repositories/fixtures.js";
 import { InMemoryIngestionRunsRepository } from "./repositories/ingestion-runs.js";
 import { InMemoryOddsObservationsRepository, InMemoryTeamObservationsRepository } from "./repositories/observations.js";
@@ -239,5 +240,53 @@ describe("ingestMatchResults / ingestMatchEvents / ingestOddsObservations", () =
     const asOfKickoff = await deps.oddsObservations.listForFixtureAsOf(fixture!.id, "2026-01-10T19:00:00Z");
     expect(asOfKickoff).toHaveLength(3);
     expect(asOfKickoff.every((o) => new Date(o.observedAt).getTime() <= new Date("2026-01-10T19:00:00Z").getTime())).toBe(true);
+  });
+
+  // Section 13 — a SECOND provider (e.g. The Odds API) identifies the
+  // same real-world fixture with its own, unrelated id. Without a
+  // resolver, odds under that provider string can never resolve via
+  // deps.fixtures.getByProviderIdentity() — that's the exact gap
+  // fixtureIdentityResolver exists to close.
+  it("without a fixtureIdentityResolver, odds under a second provider's own fixture id are quarantined, never guessed", async () => {
+    const deps = buildDeps();
+    await seedFixtures(deps);
+
+    const secondProviderOdds = [{ kind: "odds", fixture_id: "ODDS-EVT-1", market_type: "match_result_1x2", selection: "home", odds: 2.4, bookmaker: "bookmaker_x", observed_at: "2026-01-10T18:00:00Z", published_at: "2026-01-10T17:55:00Z" }];
+
+    const run = await ingestOddsObservations(deps, "the-odds-api", "backfill", secondProviderOdds, normalizeTestFixtureOdds);
+    expect(run.recordsInserted).toBe(0);
+    expect(run.recordsRejected).toBe(1);
+  });
+
+  it("with a fixtureIdentityResolver that has a confirmed mapping, odds under a second provider's own fixture id resolve to the correct internal fixture", async () => {
+    const deps = buildDeps();
+    await seedFixtures(deps);
+
+    const fixture = await deps.fixtures.getByProviderIdentity(TEST_FIXTURE_PROVIDER_NAME, "TFP-FIX-1");
+    const resolver = new InMemoryFixtureExternalIdentitiesRepository();
+    await resolver.recordMapping({ fixtureId: fixture!.id, provider: "the-odds-api", providerFixtureId: "ODDS-EVT-1", matchMethod: "team_name_kickoff_time" });
+
+    const secondProviderOdds = [{ kind: "odds", fixture_id: "ODDS-EVT-1", market_type: "match_result_1x2", selection: "home", odds: 2.4, bookmaker: "bookmaker_x", observed_at: "2026-01-10T18:00:00Z", published_at: "2026-01-10T17:55:00Z" }];
+
+    const run = await ingestOddsObservations(deps, "the-odds-api", "backfill", secondProviderOdds, normalizeTestFixtureOdds, resolver);
+    expect(run.recordsInserted).toBe(1);
+    expect(run.recordsRejected).toBe(0);
+
+    const odds = await deps.oddsObservations.listForFixture(fixture!.id);
+    const fromSecondProvider = odds.find((o) => o.provider === "the-odds-api");
+    expect(fromSecondProvider).toBeDefined();
+    expect(fromSecondProvider?.bookmakerSource).toBe("bookmaker_x");
+  });
+
+  it("with a fixtureIdentityResolver that has NO mapping for this providerFixtureId, the observation is still quarantined — the resolver never fabricates a match", async () => {
+    const deps = buildDeps();
+    await seedFixtures(deps);
+    const resolver = new InMemoryFixtureExternalIdentitiesRepository();
+
+    const unmappedOdds = [{ kind: "odds", fixture_id: "ODDS-EVT-UNMAPPED", market_type: "match_result_1x2", selection: "home", odds: 2.4, bookmaker: "bookmaker_x", observed_at: "2026-01-10T18:00:00Z", published_at: "2026-01-10T17:55:00Z" }];
+
+    const run = await ingestOddsObservations(deps, "the-odds-api", "backfill", unmappedOdds, normalizeTestFixtureOdds, resolver);
+    expect(run.recordsInserted).toBe(0);
+    expect(run.recordsRejected).toBe(1);
   });
 });

@@ -84,6 +84,13 @@ export const envSchema = z
     FOOTBALL_DATA_MAX_RETRIES: z.coerce.number().int().nonnegative().default(2),
     FOOTBALL_DATA_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().optional(),
     FOOTBALL_DATA_POLL_INTERVAL_SECONDS: z.coerce.number().int().positive().optional(),
+    // Section 13 — "do NOT hard-code a permanent league list": the
+    // initial league/competition selection is supplied entirely through
+    // this server-side config value, comma-separated provider
+    // (Sportmonks) league ids. Unset = no competitions selected, which
+    // means reference/fixture ingestion naturally no-ops rather than
+    // ingesting everything by default.
+    FOOTBALL_DATA_COMPETITION_IDS: optionalNonEmpty,
     ODDS_PROVIDER: optionalNonEmpty,
     ODDS_API_KEY: optionalNonEmpty,
     ODDS_ENABLED: z.enum(["true", "false"]).default("false"),
@@ -92,6 +99,10 @@ export const envSchema = z
     ODDS_MAX_RETRIES: z.coerce.number().int().nonnegative().default(2),
     ODDS_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().optional(),
     ODDS_POLL_INTERVAL_SECONDS: z.coerce.number().int().positive().optional(),
+    // Section 13 — comma-separated The Odds API sport keys (e.g.
+    // "soccer_epl,soccer_spain_la_liga"). Unset = no sport keys
+    // selected, odds ingestion naturally no-ops.
+    ODDS_SPORT_KEYS: optionalNonEmpty,
     AVIATOR_DATA_PROVIDER: optionalNonEmpty,
     AVIATOR_DATA_API_KEY: optionalNonEmpty,
 

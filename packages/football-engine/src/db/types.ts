@@ -166,6 +166,16 @@ export interface OddsObservationRow {
   readonly created_at: string;
 }
 
+/** Section 13 — maps a second (non-canonical) provider's own fixture/event id to the one internal fixture row; see migration 20261005200100_fixture_external_identities.sql. */
+export interface FixtureExternalIdentityRow {
+  readonly id: string;
+  readonly fixture_id: string;
+  readonly provider: string;
+  readonly provider_fixture_id: string;
+  readonly match_method: string;
+  readonly created_at: string;
+}
+
 export interface IngestionRunRow {
   readonly id: string;
   readonly provider: string;

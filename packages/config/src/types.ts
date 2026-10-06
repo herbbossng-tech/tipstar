@@ -15,6 +15,14 @@ export interface FootballDataProviderEnvConfig {
   readonly maxRetries: number;
   readonly rateLimitPerMinute: number | undefined;
   readonly pollIntervalSeconds: number | undefined;
+  /**
+   * Section 13 — the provider-scoped external identifiers this
+   * integration is actually allowed to ingest (Sportmonks league ids
+   * for `providers.football`, The Odds API sport keys for
+   * `providers.odds`). Empty = nothing selected yet, never "ingest
+   * everything" by default — see schema.ts's FOOTBALL_DATA_COMPETITION_IDS/ODDS_SPORT_KEYS.
+   */
+  readonly selectedIds: readonly string[];
 }
 
 export interface AppConfig {

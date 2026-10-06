@@ -50,6 +50,21 @@ export const OperationalJobType = {
   TELEGRAM_REPORT_PUBLICATION: "TELEGRAM_REPORT_PUBLICATION",
   PERFORMANCE_SNAPSHOT: "PERFORMANCE_SNAPSHOT",
   OPERATIONAL_HEALTH_CHECK: "OPERATIONAL_HEALTH_CHECK",
+  /**
+   * Section 13 — real football data provider ingestion, using this SAME
+   * durable job infrastructure (no second job system). Three composite
+   * types (fewer than the spec's maximum five, using its own "fewer
+   * composite types if cleaner" allowance): reference data
+   * (competitions/seasons/teams), fixtures+results+events together (one
+   * Sportmonks fixture payload already carries all three), and odds
+   * (identity reconciliation + odds observations). See
+   * packages/agents/src/jobs/football/ and
+   * docs/architecture/FOOTBALL_PROVIDER_INTEGRATION.md. Matching Postgres
+   * enum values added by migration 20261005200000.
+   */
+  FOOTBALL_REFERENCE_INGESTION: "FOOTBALL_REFERENCE_INGESTION",
+  FOOTBALL_FIXTURE_INGESTION: "FOOTBALL_FIXTURE_INGESTION",
+  FOOTBALL_ODDS_INGESTION: "FOOTBALL_ODDS_INGESTION",
 } as const;
 export type OperationalJobType = (typeof OperationalJobType)[keyof typeof OperationalJobType];
 

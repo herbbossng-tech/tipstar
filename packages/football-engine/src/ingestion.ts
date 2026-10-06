@@ -448,12 +448,34 @@ export async function ingestMatchEvents(
   });
 }
 
+/**
+ * Section 13 — identity reconciliation for a SECOND (non-canonical)
+ * provider's own fixture/event id (e.g. The Odds API), whose ids are
+ * never assumed to equal the canonical provider's (Sportmonks)
+ * `provider_fixture_id` — see `fixture_external_identities` (migration
+ * 20261005200100) and FOOTBALL_PROVIDER_INTEGRATION.md. A confirmed
+ * mapping is only ever written there by a job that performed an
+ * explicit, non-ambiguous match beforehand (team names + kickoff time);
+ * `resolve()` itself never guesses — it is a pure lookup against
+ * already-confirmed mappings, and returns undefined (never a best
+ * guess) when none exists.
+ */
+export interface FixtureIdentityResolver {
+  resolve(provider: string, providerFixtureId: string): Promise<UUID | undefined>;
+}
+
 export async function ingestOddsObservations(
   deps: IngestionDependencies,
   provider: string,
   mode: IngestionMode,
   rawOdds: readonly RawRecord[],
   normalizeOdds: (raw: RawRecord) => Result<NormalizedOddsObservation, ValidationError>,
+  // Optional and backward-compatible: omitted entirely, this behaves
+  // exactly as before — a fixture resolves only via
+  // deps.fixtures.getByProviderIdentity(provider, ...). Only a provider
+  // whose own fixture ids are NOT the ones public.fixtures was keyed by
+  // (i.e. not the canonical Sportmonks provider string) needs this.
+  fixtureIdentityResolver?: FixtureIdentityResolver,
 ): Promise<IngestionRun> {
   const run = await deps.ingestionRuns.start({ provider, mode });
   const ctx: QualityCheckContext = { now: nowIso() };
@@ -473,7 +495,13 @@ export async function ingestOddsObservations(
       continue;
     }
 
-    const fixture = await deps.fixtures.getByProviderIdentity(provider, normalized.value.providerFixtureId);
+    let fixture = await deps.fixtures.getByProviderIdentity(provider, normalized.value.providerFixtureId);
+    if (!fixture && fixtureIdentityResolver) {
+      const resolvedFixtureId = await fixtureIdentityResolver.resolve(provider, normalized.value.providerFixtureId);
+      if (resolvedFixtureId) {
+        fixture = await deps.fixtures.getById(resolvedFixtureId);
+      }
+    }
     if (!fixture) {
       await deps.quarantine.quarantine({
         provider,
